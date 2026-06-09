@@ -1,4 +1,6 @@
 # Local runtime/session state
+.claude/
+.codex/
 .omx/
 .sh/
 .sh-*/

@@ -115,6 +115,50 @@ The harness should persist runtime state under `.sh/` when implemented as a CLI/
 
 State is leader-owned. Worker agents may report evidence, but they do not mutate the goal ledger or mark completion.
 
+## Plugin Install
+
+Preferred install path is host-native plugin installation.
+
+Claude Code:
+
+```powershell
+claude plugin marketplace add FrogRim/signature-harness
+claude plugin install signature-harness
+```
+
+After restarting Claude Code, use:
+
+```text
+/sh <goal>
+/signature-harness:sh <goal>
+```
+
+Codex:
+
+```powershell
+codex plugin marketplace add FrogRim/signature-harness
+```
+
+If the active Codex build exposes plugin enable/install through the app or a newer CLI, enable `signature-harness@signature-harness` after adding the marketplace. Current CLI builds may only register the marketplace source; in that case use the fallback installer for Codex skill files until the host plugin manager enables the plugin.
+
+After Codex loads the plugin or fallback skill install, use:
+
+```text
+$sh-goal
+$goal-loop
+$orchestration-loop
+$red-team
+$oracle-verification
+```
+
+Fallback/development install:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_local.ps1
+```
+
+The fallback installer copies portable skills to the user-local Codex/Claude skill folders, installs the Claude slash commands as `/sh` and `/signature-harness:sh`, and copies a self-contained source/runtime bundle into `~/.signature-harness`. It skips existing unmarked user files unless `-Force` is passed.
+
 ## Runtime Substrate
 
 SH does not require a standalone CLI product. It does require small deterministic helpers for checks that should not be left to an LLM.
@@ -139,14 +183,6 @@ The substrate handles:
 - resume-check contract validation
 
 `run-resume` fails closed until a real sandbox adapter exists. Unsafe local execution is not a fallback.
-
-Install locally for Codex and Claude Code:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install_local.ps1
-```
-
-The installer copies portable skills to the user-local Codex/Claude skill folders, installs the Claude slash commands as `/sh` and `/signature-harness:sh`, and copies a self-contained source/runtime bundle into `~/.signature-harness`. It skips existing unmarked user files unless `-Force` is passed.
 
 ## Orchestration Control Plane
 

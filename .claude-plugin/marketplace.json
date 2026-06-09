@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "signature-harness",
+  "version": "0.8.1",
+  "description": "Personal cross-agent goal-loop harness for Claude Code and Codex.",
+  "owner": {
+    "name": "Frogrim",
+    "github": "FrogRim"
+  },
+  "plugins": [
+    {
+      "name": "signature-harness",
+      "description": "Goal-loop harness with orchestration, red-team pressure, staged oracle verification, gap-fill recovery, and user-fit routing.",
+      "version": "0.8.1",
+      "author": {
+        "name": "Frogrim",
+        "github": "FrogRim"
+      },
+      "source": "./",
+      "category": "workflow"
+    }
+  ]
+}

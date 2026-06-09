@@ -1,0 +1,22 @@
+{
+  "name": "signature-harness",
+  "interface": {
+    "displayName": "Signature Harness"
+  },
+  "plugins": [
+    {
+      "name": "signature-harness",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/FrogRim/signature-harness.git",
+        "path": ".",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "NONE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

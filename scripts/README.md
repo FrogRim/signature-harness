@@ -24,7 +24,22 @@ py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
 Unsafe local execution would violate the resume-check security contract.
 
-## Local Install
+## Fallback Local Install
+
+Prefer plugin-native installation from the repository root:
+
+```powershell
+claude plugin marketplace add FrogRim/signature-harness
+claude plugin install signature-harness
+codex plugin marketplace add FrogRim/signature-harness
+```
+
+Claude Code exposes `plugin install` directly. Current Codex CLI builds may only
+register the marketplace source; if the host does not expose plugin enable/install
+yet, use this fallback installer for Codex skill files.
+
+Use the fallback installer when developing the harness locally or when a host
+plugin marketplace is unavailable.
 
 Install the portable skills and Claude slash commands into the user-local Codex
 and Claude folders, plus a self-contained bundle under `~/.signature-harness`:

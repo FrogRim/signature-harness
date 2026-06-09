@@ -1,0 +1,37 @@
+{
+  "name": "signature-harness",
+  "version": "0.8.1",
+  "description": "Personal cross-agent goal-loop harness: orchestration control plane, goal loops, red-team pressure, staged oracle verification, gap-fill recovery, secure blocked rehydration contracts, and user-fit routing.",
+  "author": {
+    "name": "Frogrim",
+    "url": "https://github.com/FrogRim"
+  },
+  "homepage": "https://github.com/FrogRim/signature-harness",
+  "repository": "https://github.com/FrogRim/signature-harness",
+  "license": "UNLICENSED",
+  "keywords": [
+    "goal-loop",
+    "harness",
+    "orchestration",
+    "red-team",
+    "oracle-verification",
+    "codex",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Signature Harness",
+    "shortDescription": "Goal-loop harness for verified agent work",
+    "longDescription": "Signature Harness routes goals through active slices, Seed contracts, read-only orchestration, red-team pressure, staged oracle verification, gap-fill recovery, and user-fit calibration.",
+    "developerName": "Frogrim",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive"
+    ],
+    "websiteURL": "https://github.com/FrogRim/signature-harness",
+    "defaultPrompt": [
+      "Run a goal-loop with orchestration, red-team pressure, and oracle verification"
+    ],
+    "brandColor": "#111827"
+  }
+}
