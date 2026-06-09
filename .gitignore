@@ -1,0 +1,24 @@
+# Local runtime/session state
+.omx/
+.sh/
+.sh-*/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+tmp/
+temp/

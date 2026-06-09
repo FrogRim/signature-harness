@@ -1,0 +1,6 @@
+{
+  "name": "signature-harness",
+  "version": "0.8.0",
+  "description": "Personal cross-agent goal-loop harness: deterministic runtime substrate, read-only orchestration control plane, explicit termination/recovery state machine, gap-fill slices, secure blocked rehydration, active slices, Seed contracts, rule memory reads, ambiguity gates, staged oracle verification, candidate-only self-improvement, promotion gates, evolution loops, red-team pressure, durable evidence, and user-fit routing. Claude Code adapter plus a portable skills core that also runs on Codex.",
+  "author": { "name": "Frogrim" }
+}

@@ -1,0 +1,17 @@
+{
+  "root": ".",
+  "drift_targets": [
+    "src/path-owned-by-active-slice"
+  ],
+  "evidence_assets": [
+    "coverage/lcov.info",
+    "test-results.xml"
+  ],
+  "drift_exclude_names": [
+    ".git",
+    ".sh",
+    ".omx",
+    "node_modules",
+    "__pycache__"
+  ]
+}
