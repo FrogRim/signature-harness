@@ -632,6 +632,7 @@ SH intentionally does not copy the Pokemon/mGBA runtime. The useful subset is th
 ## Files
 
 - `scripts/sh_runtime.py` - deterministic runtime substrate for state, hash, directive, ledger, and resume-check validation
+- `docs/SIGNATURE_HARNESS_IMPLEMENTATION_REVIEW.md` - implementation/design review document covering what was built, why it was built that way, and what remains intentionally out of scope
 - `skills/` - portable skill core
 - `agents/` - Claude Code role prompts / conceptual role surfaces
 - `commands/sh.md` - Claude Code slash command entrypoint
