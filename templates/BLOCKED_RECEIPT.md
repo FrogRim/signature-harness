@@ -11,6 +11,7 @@
 - blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci
 - required_user_action:
 - resume_check_id:
+- resume_check_contract_sha256:
 
 ## Resume Check Contract
 - argv:
@@ -18,6 +19,7 @@
 - env_from_user:
 - timeout_sec:
 - allowed_egress:
+- declared_evidence_outputs:
 - writable_paths:
 - sandbox_required: yes
 

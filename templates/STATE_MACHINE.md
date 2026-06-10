@@ -11,6 +11,7 @@
 | Terminal | `COMPLETE`, `ABORTED` |
 
 Any transition not listed below is a system-level exception.
+`proof_still_missing` is the explicit `GAP_FILL` self-loop before the 3-strikes pause threshold.
 
 ## Transitions
 
@@ -22,11 +23,16 @@ Any transition not listed below is a system-level exception.
 | `RUNNING` | Red-team: 3-strikes no-progress | `PAUSED` | Red-team/evolution/unstuck chooses a new route before further execution. |
 | `RUNNING` | Heartbeat: missed plus timeout, or critical risk | `ABORTED` | Orchestration hard-stops the run and preserves evidence. |
 | `GAP_FILL` | Missing proof acquired | `RUNNING` | Goal loop continues only with oracle recheck required. |
+| `GAP_FILL` | Proof still missing but below 3 strikes | `GAP_FILL` | Continue the narrow missing-proof slice; no broad retry. |
 | `GAP_FILL` | Proof still missing 3 times | `PAUSED` | Orchestration pauses and reroutes. |
+| `GAP_FILL` | Heartbeat timeout, critical risk, or security violation | `ABORTED` | Orchestration hard-stops the run and preserves evidence. |
 | `BLOCKED` | Rehydration gate: resume check passed and hashes clean | `RECOVERY` | Goal loop resumes in recovery mode with a narrow recovery slice. |
 | `BLOCKED` | Rehydration gate: resume check failed | `BLOCKED` | Orchestration keeps the run parked and requests the missing action. |
 | `RECOVERY` | Oracle: recovery evidence validated | `RUNNING` | Orchestration restores original active-slice authority after oracle recheck. |
+| `RECOVERY` | Oracle: auth, user interaction, permission, or external state required | `BLOCKED` | Orchestration parks the recovery slice and writes a new blocked receipt. |
 | `RECOVERY` | Drift detected | `PAUSED` | Orchestration routes to evolution, unstuck, or clarification. |
+| `RECOVERY` | Heartbeat timeout, critical risk, or security violation | `ABORTED` | Orchestration hard-stops the recovery run and preserves evidence. |
 | `PAUSED` | Evolution, unstuck, or Seed update accepted | `RUNNING` | Orchestration dispatches the revised route. |
+| `PAUSED` | Abort requested, critical risk, or security violation | `ABORTED` | Orchestration permanently discards the loop and preserves evidence. |
 
 `COMPLETE` and `ABORTED` are terminal and must not be resumed.

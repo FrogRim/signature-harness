@@ -37,6 +37,11 @@
     "tick_seconds": 60,
     "missed_seconds": 180,
     "hard_abort_candidate_seconds": 300
-  }
+  },
+  "extra": {}
 }
 ```
+
+Runtime-generated directive keys are reserved. Caller-provided payload may add
+only `extra` data and must not override state, action, heartbeat, owner, or
+execution permission fields.

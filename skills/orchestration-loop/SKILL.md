@@ -84,12 +84,17 @@ State transitions:
 | `RUNNING` | no-progress 3-strikes | `PAUSED` | pause and route through red-team/evolution/unstuck |
 | `RUNNING` | missed heartbeat plus timeout or critical risk | `ABORTED` | hard-stop run and preserve evidence |
 | `GAP_FILL` | missing proof acquired | `RUNNING` | require oracle recheck before further expansion |
+| `GAP_FILL` | proof still missing below 3 strikes | `GAP_FILL` | continue only the missing-proof slice |
 | `GAP_FILL` | proof still missing 3 times | `PAUSED` | pause and reroute |
+| `GAP_FILL` | missed heartbeat plus timeout, critical risk, or security violation | `ABORTED` | hard-stop run and preserve evidence |
 | `BLOCKED` | rehydration gate passes | `RECOVERY` | dispatch narrow recovery slice |
 | `BLOCKED` | rehydration gate fails | `BLOCKED` | remain blocked and request the missing action |
 | `RECOVERY` | recovery evidence validated | `RUNNING` | restore original active-slice authority after oracle recheck |
+| `RECOVERY` | Oracle `BLOCKED` | `BLOCKED` | park recovery and write a fresh blocked receipt |
 | `RECOVERY` | drift detected | `PAUSED` | route to evolution, unstuck, or clarification |
+| `RECOVERY` | missed heartbeat plus timeout, critical risk, or security violation | `ABORTED` | hard-stop recovery and preserve evidence |
 | `PAUSED` | evolution, unstuck, or Seed update accepted | `RUNNING` | dispatch revised route |
+| `PAUSED` | abort requested, critical risk, or security violation | `ABORTED` | permanently discard loop and preserve evidence |
 
 Terminal states `COMPLETE` and `ABORTED` must not be resumed.
 
@@ -135,6 +140,9 @@ dynamic workflow evidence contract and validate it mechanically:
 py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
 ```
 
+Use `--require-artifacts --root <path>` when Oracle completion depends on
+existing evidence files instead of descriptive evidence strings.
+
 When `completion_allowed` is false, dispatch `GAP_FILL` for the listed
 `incomplete_record_ids`. Do not let the goal loop repeat the whole workflow.
 
@@ -165,9 +173,9 @@ When Oracle returns `BLOCKED`, write a blocked receipt under:
 After the user or external system resolves the blocker, run the rehydration gate mechanically:
 
 1. Load the blocked receipt, Seed, active slice, run trace, red-team/oracle receipts, evidence map, and last safe checkpoint.
-2. Resolve `resume_check_id` to an allowlisted command contract.
+2. Resolve `resume_check_id` to an allowlisted command contract and verify the blocked receipt's `resume_check_contract_sha256`.
 3. Reject free-form command strings.
-4. Validate that `argv` contains no shell metacharacters and `shell` is `false`.
+4. Validate that `argv` contains no shell metacharacters, rejects Windows script shims, and has `shell` set to `false`.
 5. Inject user secrets only through isolated subprocess environment variables.
 6. Execute in a least-privilege sandbox with denied-by-default network and declared egress/write allowlists.
 7. If the check fails, stay `BLOCKED`.

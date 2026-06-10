@@ -40,12 +40,14 @@ Seed: <seed id/hash or none with reason>
 - blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci | none
 - required_user_action:
 - resume_check_id:
+- resume_check_contract_sha256:
 - resume_check_contract:
   - argv:
   - shell: false
   - env_from_user:
   - timeout_sec:
   - allowed_egress:
+  - declared_evidence_outputs:
   - writable_paths:
 - last_safe_checkpoint_hash:
 - open_evidence_gaps:

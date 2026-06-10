@@ -70,11 +70,19 @@ Use the deterministic substrate:
 py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
 ```
 
+Use the stricter artifact-backed form for completion claims:
+
+```powershell
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path> --root <repo> --require-artifacts
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path> --root <repo> --require-artifacts --evidence-manifest <hash-manifest-output>
+```
+
 If the schema is invalid, return `INCOMPLETE` with a missing-proof report for the
 bad contract. If the schema is valid but `completion_allowed` is false, return
 `INCOMPLETE` and point orchestration at the listed `incomplete_record_ids`.
 Do not accept "all agents reported done" unless `acceptance_verified`,
-`incomplete`, and `all_done` agree.
+`incomplete`, and `all_done` agree. In manifest-backed artifact mode, evidence
+paths must also appear in `hash-manifest` `evidence_entries`.
 
 ## Hash Domains
 
@@ -130,12 +138,14 @@ Seed: <seed id/hash or none with reason>
 - blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci | none
 - required_user_action:
 - resume_check_id:
+- resume_check_contract_sha256:
 - resume_check_contract:
   - argv:
   - shell: false
   - env_from_user:
   - timeout_sec:
   - allowed_egress:
+  - declared_evidence_outputs:
   - writable_paths:
 - last_safe_checkpoint_hash:
 - open_evidence_gaps:
@@ -163,4 +173,4 @@ Seed: <seed id/hash or none with reason>
 ```
 
 Do not accept confidence, effort, or "looks good" as evidence.
-Do not output a free-form shell command as a resume check. Use only an allowlisted `resume_check_id` and fixed `argv` contract with `shell: false`.
+Do not output a free-form shell command as a resume check. Use only an allowlisted `resume_check_id`, a receipt-bound contract hash, and fixed `argv` contract with `shell: false`.

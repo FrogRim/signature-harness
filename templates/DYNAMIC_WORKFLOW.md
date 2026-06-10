@@ -44,6 +44,8 @@ Record evidence in `DYNAMIC_WORKFLOW_EVIDENCE.json` shape and validate with:
 
 ```powershell
 py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path> --root <repo> --require-artifacts
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path> --root <repo> --require-artifacts --evidence-manifest <hash-manifest-output>
 ```
 
 Completion requires:
@@ -51,6 +53,8 @@ Completion requires:
 - `cost_gate.workflow_worthy` is true
 - every `record` with `done: true` has concrete evidence
 - `acceptance_verified` maps final criteria to evidence
+- artifact-backed mode can resolve evidence values to existing files under the repo root
+- manifest-backed artifact mode can find those files in `hash-manifest` `evidence_entries`
 - `incomplete` is empty
 - `all_done` is true
 

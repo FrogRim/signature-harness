@@ -1,8 +1,8 @@
 {
   "workflow_id": "wf_001",
-  "goal_id": "",
-  "seed_id": "",
-  "active_slice": "",
+  "goal_id": "goal_001",
+  "seed_id": "seed_001",
+  "active_slice": "slice_001",
   "pattern": "fan-out-and-synthesize",
   "cost_gate": {
     "workflow_worthy": true,
@@ -16,7 +16,7 @@
       "criterion": "The assigned slice has mechanical verification evidence.",
       "done": true,
       "evidence": [
-        "command output, artifact path, receipt path, or trace reference"
+        ".sh/evidence/workflow/lane_1.json"
       ]
     }
   ],
@@ -26,7 +26,7 @@
       "record_ids": [
         "lane_1"
       ],
-      "evidence": "Oracle-readable synthesis evidence path or summary"
+      "evidence": ".sh/evidence/workflow/synthesis.json"
     }
   ],
   "incomplete": [],

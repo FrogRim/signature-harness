@@ -36,17 +36,26 @@ TRANSITIONS: Dict[Tuple[str, str], str] = {
     ("RUNNING", "critical_risk"): "ABORTED",
     ("RUNNING", "security_violation"): "ABORTED",
     ("GAP_FILL", "missing_proof_acquired"): "RUNNING",
+    ("GAP_FILL", "proof_still_missing"): "GAP_FILL",
     ("GAP_FILL", "proof_still_missing_3x"): "PAUSED",
     ("GAP_FILL", "oracle_blocked"): "BLOCKED",
+    ("GAP_FILL", "heartbeat_timeout"): "ABORTED",
+    ("GAP_FILL", "critical_risk"): "ABORTED",
     ("GAP_FILL", "security_violation"): "ABORTED",
     ("BLOCKED", "rehydration_pass"): "RECOVERY",
     ("BLOCKED", "rehydration_fail"): "BLOCKED",
     ("RECOVERY", "recovery_validated"): "RUNNING",
+    ("RECOVERY", "oracle_blocked"): "BLOCKED",
     ("RECOVERY", "drift_detected"): "PAUSED",
+    ("RECOVERY", "heartbeat_timeout"): "ABORTED",
+    ("RECOVERY", "critical_risk"): "ABORTED",
     ("RECOVERY", "security_violation"): "ABORTED",
     ("PAUSED", "evolution_accepted"): "RUNNING",
     ("PAUSED", "unstuck_accepted"): "RUNNING",
     ("PAUSED", "seed_update_accepted"): "RUNNING",
+    ("PAUSED", "abort_requested"): "ABORTED",
+    ("PAUSED", "critical_risk"): "ABORTED",
+    ("PAUSED", "security_violation"): "ABORTED",
 }
 
 EVENT_ACTION = {
@@ -58,7 +67,9 @@ EVENT_ACTION = {
     "critical_risk": "abort",
     "security_violation": "abort",
     "missing_proof_acquired": "continue",
+    "proof_still_missing": "gap-fill",
     "proof_still_missing_3x": "pause",
+    "abort_requested": "abort",
     "rehydration_pass": "recovery",
     "rehydration_fail": "blocked",
     "recovery_validated": "continue",
@@ -107,8 +118,25 @@ DEFAULT_DRIFT_EXCLUDE_NAMES = {
     ".ruff_cache",
 }
 
-SHELL_META_PATTERNS = (";", "&&", "|", "`", "$(", ">", "<", "\n", "\r")
+SHELL_META_PATTERNS = ("&&", ";", "|", "&", "`", "$(", "%", "^", "!", ">", "<", "\n", "\r")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+EGRESS_RE = re.compile(r"^[A-Za-z0-9.-]+:[0-9]{1,5}$")
+WINDOWS_SCRIPT_SUFFIXES = (".bat", ".cmd", ".ps1")
+WINDOWS_SCRIPT_SHIM_NAMES = {"npm", "npx", "pnpm", "yarn"}
+RESERVED_DIRECTIVE_KEYS = {
+    "run_id",
+    "goal_id",
+    "seed_id",
+    "active_slice",
+    "issued_at",
+    "from_state",
+    "to_state",
+    "action",
+    "required_next_owner",
+    "allow_more_execution",
+    "oracle_recheck_required",
+    "heartbeat_policy",
+}
 DYNAMIC_WORKFLOW_PATTERNS = {
     "classify-and-act",
     "fan-out-and-synthesize",
@@ -252,7 +280,14 @@ def contains_excluded_part(path: Path, names: Iterable[str]) -> bool:
     return any(part in set(names) for part in path.parts)
 
 
-def collect_files(root: Path, targets: List[str], *, domain: str, exclude_names: Iterable[str]) -> List[Path]:
+def collect_files(
+    root: Path,
+    targets: List[str],
+    *,
+    domain: str,
+    exclude_names: Iterable[str],
+    missing_entries: Optional[List[Dict[str, Any]]] = None,
+) -> List[Path]:
     files: List[Path] = []
     exclude_set = set(exclude_names)
     for raw in targets:
@@ -268,6 +303,9 @@ def collect_files(root: Path, targets: List[str], *, domain: str, exclude_names:
         if domain == "evidence" and (rel.startswith(".sh/") and not rel.startswith(".sh/evidence/")):
             raise ShRuntimeError(f"evidence target may use .sh/evidence only, not other .sh state: {raw!r}")
         if not target.exists():
+            if domain == "drift" and missing_entries is not None:
+                missing_entries.append({"path": rel, "status": "missing", "sha256": None, "size": 0})
+                continue
             raise ShRuntimeError(f"{domain} target does not exist: {raw!r}")
         if target.is_file():
             if domain == "drift" and contains_excluded_part(target.relative_to(root), exclude_set):
@@ -288,17 +326,21 @@ def collect_files(root: Path, targets: List[str], *, domain: str, exclude_names:
     return unique
 
 
-def hash_file_set(root: Path, files: List[Path]) -> Tuple[str, List[Dict[str, Any]]]:
+def hash_file_set(root: Path, files: List[Path], extra_entries: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, List[Dict[str, Any]]]:
     entries = []
     for path in files:
         stat = path.stat()
         entries.append(
             {
                 "path": rel_posix(path, root),
+                "status": "present",
                 "sha256": file_sha256(path),
                 "size": stat.st_size,
             }
         )
+    if extra_entries:
+        entries.extend(extra_entries)
+    entries = sorted(entries, key=lambda entry: entry["path"])
     return json_sha256(entries), entries
 
 
@@ -313,10 +355,13 @@ def git_diff_hash(root: Path, rel_paths: List[str]) -> Optional[str]:
         )
         if inside.returncode != 0:
             return None
-        cmd = ["git", "-C", str(root), "diff", "--no-ext-diff", "--binary", "--"] + rel_paths
+        cmd = ["git", "-C", str(root), "diff", "--no-ext-diff", "--binary", "HEAD", "--"] + rel_paths
         diff = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if diff.returncode != 0:
-            return None
+            cmd = ["git", "-C", str(root), "diff", "--no-ext-diff", "--binary", "--"] + rel_paths
+            diff = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if diff.returncode != 0:
+                return None
         return "sha256:" + hashlib.sha256(diff.stdout).hexdigest()
     except (OSError, subprocess.SubprocessError):
         return None
@@ -334,9 +379,10 @@ def cmd_hash_manifest(args: argparse.Namespace) -> int:
     exclude_names = set(DEFAULT_DRIFT_EXCLUDE_NAMES)
     exclude_names.update(manifest.get("drift_exclude_names") or [])
 
-    drift_files = collect_files(root, drift_targets, domain="drift", exclude_names=exclude_names)
+    missing_drift_entries: List[Dict[str, Any]] = []
+    drift_files = collect_files(root, drift_targets, domain="drift", exclude_names=exclude_names, missing_entries=missing_drift_entries)
     evidence_files = collect_files(root, evidence_assets, domain="evidence", exclude_names=set())
-    drift_hash, drift_entries = hash_file_set(root, drift_files)
+    drift_hash, drift_entries = hash_file_set(root, drift_files, missing_drift_entries)
     evidence_hash, evidence_entries = hash_file_set(root, evidence_files)
     diff_hash = git_diff_hash(root, [entry["path"] for entry in drift_entries])
     payload = {
@@ -360,7 +406,50 @@ def has_shell_meta(value: str) -> Optional[str]:
     return None
 
 
-def validate_resume_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
+def valid_egress(value: str) -> bool:
+    match = EGRESS_RE.match(value)
+    if not match:
+        return False
+    try:
+        port = int(value.rsplit(":", 1)[1])
+    except ValueError:
+        return False
+    return 1 <= port <= 65535
+
+
+def contract_sha256(contract: Dict[str, Any]) -> str:
+    return json_sha256(contract)
+
+
+def is_safe_relative_path(value: str) -> bool:
+    if not is_non_empty_string(value):
+        return False
+    p = Path(value)
+    if p.is_absolute():
+        return False
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("../") or "/../" in normalized or normalized == "..":
+        return False
+    return True
+
+
+def validate_resume_binding(contract: Dict[str, Any], receipt: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    if receipt is None:
+        return findings
+    receipt_id = receipt.get("resume_check_id")
+    contract_id = contract.get("id")
+    if receipt_id != contract_id:
+        findings.append({"code": "resume_check_id_mismatch", "detail": "receipt resume_check_id does not match contract id"})
+    expected_hash = receipt.get("resume_check_contract_sha256") or receipt.get("contract_sha256")
+    if not isinstance(expected_hash, str) or not expected_hash.startswith("sha256:"):
+        findings.append({"code": "missing_contract_hash", "detail": "receipt must include resume_check_contract_sha256"})
+    elif expected_hash != contract_sha256(contract):
+        findings.append({"code": "contract_hash_mismatch", "detail": "resume contract hash does not match blocked receipt"})
+    return findings
+
+
+def validate_resume_contract(contract: Dict[str, Any], receipt: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     findings: List[Dict[str, str]] = []
 
     def finding(code: str, detail: str) -> None:
@@ -374,6 +463,10 @@ def validate_resume_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(argv, list) or not argv or not all(isinstance(x, str) and x for x in argv):
         finding("invalid_argv", "argv must be a non-empty list of strings")
     else:
+        executable = argv[0].lower()
+        executable_name = Path(executable).name
+        if executable.endswith(WINDOWS_SCRIPT_SUFFIXES) or executable_name in WINDOWS_SCRIPT_SHIM_NAMES:
+            finding("windows_script_executable", "argv[0] must not be a .bat, .cmd, .ps1, or known Windows script shim")
         for item in argv:
             meta = has_shell_meta(item)
             if meta is not None:
@@ -393,16 +486,36 @@ def validate_resume_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     allowed_egress = contract.get("allowed_egress", [])
     if not isinstance(allowed_egress, list) or not all(isinstance(x, str) for x in allowed_egress):
         finding("invalid_allowed_egress", "allowed_egress must be a list of strings")
+    else:
+        for egress in allowed_egress:
+            if not valid_egress(egress):
+                finding("invalid_allowed_egress_item", "allowed_egress entries must be host:port strings with port 1..65535")
+
+    declared_outputs = contract.get("declared_evidence_outputs", [])
+    if not isinstance(declared_outputs, list) or not all(isinstance(x, str) and is_safe_relative_path(x) for x in declared_outputs):
+        finding("invalid_declared_evidence_outputs", "declared_evidence_outputs must be relative evidence paths when present")
+        declared_output_set = set()
+    else:
+        declared_output_set = set(declared_outputs)
 
     writable_paths = contract.get("writable_paths", [])
     if not isinstance(writable_paths, list) or not writable_paths or not all(isinstance(x, str) for x in writable_paths):
         finding("invalid_writable_paths", "writable_paths must be a non-empty list of strings")
+    else:
+        for writable in writable_paths:
+            if writable == "<sandbox-tmp>" or writable.startswith("<sandbox-tmp>/"):
+                continue
+            if writable in declared_output_set:
+                continue
+            finding("invalid_writable_path_scope", "writable_paths may include only <sandbox-tmp> or declared_evidence_outputs")
 
     if contract.get("sandbox_required") is not True:
         finding("sandbox_required_missing", "sandbox_required must be true")
 
     if contract.get("records_secret") is not False:
         finding("records_secret_not_false", "records_secret must be false")
+
+    findings.extend(validate_resume_binding(contract, receipt))
 
     rejected = bool(findings)
     return {
@@ -411,6 +524,7 @@ def validate_resume_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
         "recommended_state": "BLOCKED" if not rejected else "ABORTED",
         "security_findings": findings,
         "resume_check_id": check_id,
+        "contract_sha256": contract_sha256(contract),
     }
 
 
@@ -418,7 +532,12 @@ def cmd_validate_resume(args: argparse.Namespace) -> int:
     contract = load_json(Path(args.contract).resolve())
     if not isinstance(contract, dict):
         raise ShRuntimeError("resume check contract must be a JSON object")
-    result = validate_resume_contract(contract)
+    receipt = None
+    if args.receipt:
+        receipt = load_json(Path(args.receipt).resolve())
+        if not isinstance(receipt, dict):
+            raise ShRuntimeError("blocked receipt must be a JSON object")
+    result = validate_resume_contract(contract, receipt)
     return emit(result, 0 if result["ok"] else 3)
 
 
@@ -434,9 +553,65 @@ def has_evidence(value: Any) -> bool:
     return False
 
 
-def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
+def evidence_strings(value: Any) -> List[str]:
+    if is_non_empty_string(value):
+        return [value.strip()]
+    if isinstance(value, list):
+        return [item.strip() for item in value if is_non_empty_string(item)]
+    return []
+
+
+def evidence_artifact_path(root: Path, value: str) -> Optional[Path]:
+    raw = value.removeprefix("file:").strip()
+    if not raw:
+        return None
+    path = (root / raw).resolve()
+    if not is_under(path, root) or not path.is_file():
+        return None
+    return path
+
+
+def manifest_evidence_paths(manifest: Optional[Dict[str, Any]]) -> Optional[set[str]]:
+    if manifest is None:
+        return None
+    entries = manifest.get("evidence_entries")
+    if not isinstance(entries, list):
+        return set()
+    paths = set()
+    for entry in entries:
+        if isinstance(entry, dict) and is_non_empty_string(entry.get("path")):
+            paths.add(entry["path"].replace("\\", "/"))
+    return paths
+
+
+def validate_workflow_artifacts(
+    root: Path,
+    evidence_values: List[str],
+    evidence_manifest: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    manifest_paths = manifest_evidence_paths(evidence_manifest)
+    for value in evidence_values:
+        artifact = evidence_artifact_path(root, value)
+        if artifact is None:
+            findings.append({"code": "evidence_artifact_missing", "detail": f"evidence item is not an existing artifact under root: {value!r}"})
+            continue
+        rel = rel_posix(artifact, root)
+        if manifest_paths is not None and rel not in manifest_paths:
+            findings.append({"code": "evidence_not_in_manifest", "detail": f"evidence artifact is not registered in hash manifest: {rel!r}"})
+    return findings
+
+
+def validate_workflow_evidence_contract(
+    contract: Dict[str, Any],
+    *,
+    root: Optional[Path] = None,
+    require_artifacts: bool = False,
+    evidence_manifest: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     schema_findings: List[Dict[str, str]] = []
     completion_blockers: List[Dict[str, str]] = []
+    artifact_evidence: List[str] = []
 
     def schema_finding(code: str, detail: str) -> None:
         schema_findings.append({"code": code, "detail": detail})
@@ -447,6 +622,10 @@ def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, A
     workflow_id = contract.get("workflow_id")
     if workflow_id is not None and (not isinstance(workflow_id, str) or not workflow_id.strip()):
         schema_finding("invalid_workflow_id", "workflow_id must be a non-empty string when present")
+    if require_artifacts:
+        for required_field in ("goal_id", "seed_id", "active_slice"):
+            if not is_non_empty_string(contract.get(required_field)):
+                schema_finding(f"missing_{required_field}", f"{required_field} is required when artifact-backed validation is enabled")
 
     pattern = contract.get("pattern")
     if pattern not in DYNAMIC_WORKFLOW_PATTERNS:
@@ -491,6 +670,8 @@ def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, A
             elif not has_evidence(record.get("evidence")):
                 blocker("done_without_evidence", f"{record_id} is marked done but has no evidence")
                 incomplete_ids.append(record_id)
+            else:
+                artifact_evidence.extend(evidence_strings(record.get("evidence")))
 
     acceptance_verified = contract.get("acceptance_verified")
     if not isinstance(acceptance_verified, list):
@@ -516,6 +697,7 @@ def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, A
                             blocker("acceptance_references_unknown_record", f"acceptance_verified[{index}] references unknown record id {referenced_id!r}")
             if not has_evidence(item.get("evidence")) and not referenced_ids:
                 blocker("acceptance_without_evidence", f"acceptance_verified[{index}] must reference evidence or record_ids")
+            artifact_evidence.extend(evidence_strings(item.get("evidence")))
 
     declared_incomplete = contract.get("incomplete")
     if not isinstance(declared_incomplete, list):
@@ -538,6 +720,11 @@ def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, A
         blocker("all_done_mismatch", "all_done is true but incomplete records or missing evidence remain")
     if not all_done_value and not derived_incomplete:
         blocker("all_done_false_without_gap", "all_done is false but no incomplete record id is declared")
+    if require_artifacts:
+        if root is None:
+            schema_finding("missing_root", "root is required when artifact-backed validation is enabled")
+        else:
+            completion_blockers.extend(validate_workflow_artifacts(root, artifact_evidence, evidence_manifest))
 
     schema_ok = not schema_findings
     completion_allowed = schema_ok and not completion_blockers and all_done_value and not derived_incomplete
@@ -548,6 +735,7 @@ def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, A
         "pattern": pattern,
         "canonical_patterns": sorted(DYNAMIC_WORKFLOW_PATTERNS),
         "record_ids": record_ids,
+        "artifact_evidence_count": len(artifact_evidence),
         "incomplete_record_ids": derived_incomplete,
         "completion_allowed": completion_allowed,
         "recommended_oracle_verdict": "COMPLETE_ELIGIBLE" if completion_allowed else "INCOMPLETE",
@@ -560,7 +748,18 @@ def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
     contract = load_json(Path(args.evidence).resolve())
     if not isinstance(contract, dict):
         raise ShRuntimeError("dynamic workflow evidence contract must be a JSON object")
-    result = validate_workflow_evidence_contract(contract)
+    root = Path(args.root).resolve() if args.root else Path(".").resolve()
+    evidence_manifest = None
+    if args.evidence_manifest:
+        evidence_manifest = load_json(Path(args.evidence_manifest).resolve())
+        if not isinstance(evidence_manifest, dict):
+            raise ShRuntimeError("evidence manifest must be a JSON object")
+    result = validate_workflow_evidence_contract(
+        contract,
+        root=root,
+        require_artifacts=args.require_artifacts,
+        evidence_manifest=evidence_manifest,
+    )
     return emit(result, 0 if result["ok"] else 2)
 
 
@@ -568,7 +767,12 @@ def cmd_run_resume(args: argparse.Namespace) -> int:
     contract = load_json(Path(args.contract).resolve())
     if not isinstance(contract, dict):
         raise ShRuntimeError("resume check contract must be a JSON object")
-    validation = validate_resume_contract(contract)
+    receipt = None
+    if args.receipt:
+        receipt = load_json(Path(args.receipt).resolve())
+        if not isinstance(receipt, dict):
+            raise ShRuntimeError("blocked receipt must be a JSON object")
+    validation = validate_resume_contract(contract, receipt)
     if not validation["ok"]:
         return emit(validation, 3)
     payload = {
@@ -593,7 +797,10 @@ def cmd_write_directive(args: argparse.Namespace) -> int:
         extra = load_json(Path(args.payload).resolve())
         if not isinstance(extra, dict):
             raise ShRuntimeError("directive payload must be a JSON object")
-        payload.update(extra)
+        reserved = sorted(set(extra) & RESERVED_DIRECTIVE_KEYS)
+        if reserved:
+            raise ShRuntimeError("directive payload attempts to override reserved keys", payload={"reserved_keys": reserved})
+        payload["extra"] = extra
     out_path = root / ".sh" / "orchestration" / "directives" / f"{run_id}.json"
     write_json(out_path, payload)
     return emit({"ok": True, "path": str(out_path), "directive": payload})
@@ -644,8 +851,8 @@ def cmd_append_ledger(args: argparse.Namespace) -> int:
         raise ShRuntimeError("ledger entry must be a JSON object")
     normalized = normalize_ledger_entry(entry)
     ledger = root / ".sh" / "ledger.jsonl"
-    append_ledger_entry(ledger, normalized)
-    return emit({"ok": True, "ledger": str(ledger), "entry": normalized})
+    chained = append_ledger_entry(ledger, normalized)
+    return emit({"ok": True, "ledger": str(ledger), "entry": chained})
 
 
 def normalize_ledger_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
@@ -658,10 +865,36 @@ def normalize_ledger_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def append_ledger_entry(ledger: Path, normalized: Dict[str, Any]) -> None:
+def last_ledger_entry_hash(ledger: Path) -> str:
+    if not ledger.exists():
+        return "sha256:0"
+    last = ""
+    with ledger.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                last = line.strip()
+    if not last:
+        return "sha256:0"
+    try:
+        payload = json.loads(last)
+        entry_hash = payload.get("entry_hash")
+        if isinstance(entry_hash, str) and entry_hash.startswith("sha256:"):
+            return entry_hash
+    except json.JSONDecodeError:
+        pass
+    return "sha256:" + hashlib.sha256(last.encode("utf-8")).hexdigest()
+
+
+def append_ledger_entry(ledger: Path, normalized: Dict[str, Any]) -> Dict[str, Any]:
     ledger.parent.mkdir(parents=True, exist_ok=True)
+    chained = dict(normalized)
+    chained["prev_hash"] = chained.get("prev_hash") or last_ledger_entry_hash(ledger)
+    unsigned = dict(chained)
+    unsigned.pop("entry_hash", None)
+    chained["entry_hash"] = json_sha256(unsigned)
     with ledger.open("a", encoding="utf-8", newline="\n") as f:
-        f.write(json.dumps(normalized, sort_keys=True, separators=(",", ":")) + "\n")
+        f.write(json.dumps(chained, sort_keys=True, separators=(",", ":")) + "\n")
+    return chained
 
 
 def cmd_self_test(_: argparse.Namespace) -> int:
@@ -693,7 +926,7 @@ def cmd_self_test(_: argparse.Namespace) -> int:
 
         good_contract = {
             "id": "auth-smoke",
-            "argv": ["npm", "run", "auth:smoke"],
+            "argv": ["python", "--version"],
             "shell": False,
             "env_from_user": ["API_KEY"],
             "timeout_sec": 60,
@@ -704,8 +937,19 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         }
         assert validate_resume_contract(good_contract)["ok"]
         bad_contract = dict(good_contract)
-        bad_contract["argv"] = ["npm", "run", "auth:smoke && curl evil"]
+        bad_contract["argv"] = ["python", "--version", "&&", "curl"]
         assert validate_resume_contract(bad_contract)["status"] == "rejected_security"
+        script_contract = dict(good_contract)
+        script_contract["argv"] = ["npm", "--version"]
+        assert validate_resume_contract(script_contract)["status"] == "rejected_security"
+        receipt = {
+            "resume_check_id": "auth-smoke",
+            "resume_check_contract_sha256": contract_sha256(good_contract),
+        }
+        assert validate_resume_contract(good_contract, receipt)["ok"]
+        tampered_contract = dict(good_contract)
+        tampered_contract["timeout_sec"] = 61
+        assert validate_resume_contract(tampered_contract, receipt)["status"] == "rejected_security"
 
         workflow_good = {
             "workflow_id": "wf_1",
@@ -733,6 +977,51 @@ def cmd_self_test(_: argparse.Namespace) -> int:
             "all_done": True,
         }
         assert validate_workflow_evidence_contract(workflow_good)["completion_allowed"]
+        evidence_artifact = root / "coverage" / "workflow.txt"
+        evidence_artifact.write_text("passed\n", encoding="utf-8")
+        workflow_artifact = dict(workflow_good)
+        workflow_artifact["goal_id"] = "goal_1"
+        workflow_artifact["seed_id"] = "seed_1"
+        workflow_artifact["active_slice"] = "slice_1"
+        workflow_artifact["records"] = [
+            {
+                "id": "lane_1",
+                "criterion": "mechanical checks pass",
+                "done": True,
+                "evidence": ["coverage/workflow.txt"],
+            }
+        ]
+        workflow_artifact["acceptance_verified"] = [
+            {
+                "criterion": "all checks pass",
+                "record_ids": ["lane_1"],
+                "evidence": "coverage/workflow.txt",
+            }
+        ]
+        assert validate_workflow_evidence_contract(workflow_artifact, root=root, require_artifacts=True)["completion_allowed"]
+        workflow_manifest = {
+            "evidence_entries": [
+                {
+                    "path": "coverage/workflow.txt",
+                    "status": "present",
+                    "sha256": file_sha256(evidence_artifact),
+                    "size": evidence_artifact.stat().st_size,
+                }
+            ]
+        }
+        assert validate_workflow_evidence_contract(
+            workflow_artifact,
+            root=root,
+            require_artifacts=True,
+            evidence_manifest=workflow_manifest,
+        )["completion_allowed"]
+        empty_manifest_result = validate_workflow_evidence_contract(
+            workflow_artifact,
+            root=root,
+            require_artifacts=True,
+            evidence_manifest={"evidence_entries": []},
+        )
+        assert not empty_manifest_result["completion_allowed"]
         workflow_incomplete = dict(workflow_good)
         workflow_incomplete["records"] = [
             {
@@ -799,14 +1088,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("validate-resume", help="Validate an allowlisted resume-check contract")
     p.add_argument("--contract", required=True)
+    p.add_argument("--receipt", help="Blocked receipt binding the resume_check_id to a contract sha256")
     p.set_defaults(func=cmd_validate_resume)
 
     p = sub.add_parser("validate-workflow-evidence", help="Validate dynamic workflow evidence contract")
     p.add_argument("--evidence", required=True)
+    p.add_argument("--root")
+    p.add_argument("--require-artifacts", action="store_true")
+    p.add_argument("--evidence-manifest", help="hash-manifest output whose evidence_entries must include evidence artifacts")
     p.set_defaults(func=cmd_validate_workflow_evidence)
 
     p = sub.add_parser("run-resume", help="Fail-closed resume check runner until a sandbox adapter exists")
     p.add_argument("--contract", required=True)
+    p.add_argument("--receipt", help="Blocked receipt binding the resume_check_id to a contract sha256")
     p.set_defaults(func=cmd_run_resume)
 
     p = sub.add_parser("write-directive", help="Validate transition and write orchestration directive")

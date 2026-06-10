@@ -171,8 +171,10 @@ py scripts/sh_runtime.py self-test
 py scripts/sh_runtime.py init-state --root .
 py scripts/sh_runtime.py validate-transition --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py hash-manifest --manifest .sh/hash-manifest.json
-py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke.json
+py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke.json --receipt .sh/orchestration/blocked/run_1.json
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
+py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
+py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
 ```
 
 The substrate handles:
@@ -181,7 +183,7 @@ The substrate handles:
 - `.sh` state directory creation
 - `drift_hash` / `evidence_hash` calculation from active-slice manifests
 - orchestration directive writing
-- ledger append validation
+- ledger append validation with `prev_hash` / `entry_hash` chaining
 - resume-check contract validation
 - dynamic workflow evidence validation
 
@@ -277,6 +279,12 @@ The evidence contract records `pattern`, `cost_gate`, per-lane `records`,
 creates a `GAP_FILL` slice for the listed incomplete records. This is not a full
 retry and does not reopen the whole workflow.
 
+By default, the workflow evidence validator checks schema and consistency. With
+`--require-artifacts --root <path>`, evidence values must point at existing files
+under the root, and `goal_id`, `seed_id`, and `active_slice` must be present.
+Add `--evidence-manifest <path>` to require those files to appear in a prior
+`hash-manifest` output's `evidence_entries`.
+
 ## Termination And Recovery
 
 Oracle verdicts are not all runtime states. `INCOMPLETE` is a verdict only; it must create a narrowed `GAP_FILL` execution state instead of an ordinary retry.
@@ -358,22 +366,25 @@ Always exclude the whole repository space outside the active-slice target set, `
 ```yaml
 resume_check:
   id: auth-smoke
-  argv: ["npm", "run", "auth:smoke"]
+  argv: ["node.exe", "scripts/auth-smoke.js"]
   shell: false
   env_from_user: ["API_KEY"]
   timeout_sec: 60
   allowed_egress: ["api.example.com:443"]
-  writable_paths: ["<sandbox-tmp>", "<declared-evidence-output>"]
+  declared_evidence_outputs: ["coverage/auth-smoke.json"]
+  writable_paths: ["<sandbox-tmp>", "coverage/auth-smoke.json"]
 ```
 
 Security rules:
 
 - No user input may be formatted into `argv`; secrets enter only through isolated subprocess environment variables.
-- Shell metacharacters such as `;`, `&&`, `|`, backticks, `$(`, `>`, `<`, newline, or carriage return in the command contract cause the current run to enter `ABORTED` with a security incident receipt.
+- The contract must be bound to the blocked receipt with `resume_check_contract_sha256`; an arbitrary well-formed JSON contract is not sufficient.
+- Shell metacharacters such as `;`, `&&`, `|`, `&`, backticks, `$(`, `%`, `^`, `!`, `>`, `<`, newline, or carriage return in the command contract cause the current run to enter `ABORTED` with a security incident receipt.
+- `.bat`, `.cmd`, `.ps1`, and known Windows script shims such as `npm`, `npx`, `pnpm`, and `yarn` are rejected until a sandbox adapter handles Windows command dispatch safely.
 - `shell` must be `false`.
 - The check must run in a least-privilege sandbox. If sandboxing cannot be provided, keep the run `BLOCKED`; do not fall back to unsafe execution.
 - Network is denied by default and enabled only through explicit per-check egress allowlists.
-- Write access is limited to sandbox temp and declared evidence outputs.
+- Write access is limited to `<sandbox-tmp>` and declared evidence outputs.
 
 ## Goal Schema
 

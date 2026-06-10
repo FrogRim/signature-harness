@@ -855,7 +855,32 @@ templates/*
 6. `.sh/` runtime state writer를 더 넓게 자동화
 7. 검수 결과에 따라 contract wording과 validator schema 보강
 
-## 25. 결론
+## 25. 검수 후 보강 내역
+
+핵심 contract 경로 검수에서 지적된 약한 보장 지점을 substrate와 문서에 반영했다.
+
+반영된 수정:
+
+- `write-directive`의 `--payload`가 `to_state`, `action`, `allow_more_execution`, `oracle_recheck_required` 같은 reserved key를 덮어쓰지 못하게 했다. 추가 payload는 `extra` 아래에만 들어간다.
+- resume contract는 blocked receipt의 `resume_check_contract_sha256`과 `resume_check_id`에 바인딩할 수 있게 했다. 이제 잘 형성된 임의 JSON contract만으로는 충분하지 않다.
+- Windows 환경의 command injection 구멍을 줄이기 위해 `&`, `%`, `^`, `!`를 shell metacharacter 검사에 추가하고 `.bat`, `.cmd`, `.ps1`, `npm`, `npx`, `pnpm`, `yarn` 같은 Windows script shim을 reject한다.
+- `allowed_egress`는 `host:port` 형식으로 제한하고, `writable_paths`는 `<sandbox-tmp>` 또는 `declared_evidence_outputs`에 포함된 상대 경로만 허용한다.
+- `GAP_FILL`/`RECOVERY`에도 heartbeat timeout, critical risk, security violation의 abort transition을 추가했다.
+- `GAP_FILL`에는 3-strikes 이전의 `proof_still_missing` self-loop를 명시했다.
+- `RECOVERY -> BLOCKED`, `PAUSED -> ABORTED` 경로를 추가해 문서의 orchestration route와 상태 머신을 맞췄다.
+- dynamic workflow evidence validator에 `--require-artifacts --root <path>`와 `--evidence-manifest <path>` 옵션을 추가했다. 이 모드에서는 evidence 값이 실제 존재하는 파일이어야 하며, 선택적으로 `hash-manifest`의 `evidence_entries`에 등록된 자산인지까지 확인한다. `goal_id`, `seed_id`, `active_slice`도 필요하다.
+- `hash-manifest`는 drift target 삭제를 에러로만 처리하지 않고 `status: missing` 항목으로 drift hash에 포함한다.
+- Git diff hash는 우선 `git diff HEAD -- <paths>`를 사용해 staged 변경까지 포함하려고 시도하고, 실패 시 기존 diff 방식으로 fallback한다.
+- ledger append는 `prev_hash`와 `entry_hash`를 기록하는 hash-chain으로 바꿨다.
+
+남은 보강 후보:
+
+- 실제 sandbox adapter 구현 전, executable allowlist를 더 좁혀야 한다.
+- workflow evidence artifact mode를 Oracle 기본 경로로 강제할지, high-risk/dynamic workflow에서만 강제할지 결정해야 한다.
+- promotion gate와 ledger hash-chain 검증 명령을 별도 command로 분리할 수 있다.
+- 모든 legacy/utility skill의 active/legacy 지위를 표로 정리하면 검수 범위가 더 명확해진다.
+
+## 26. 결론
 
 현재 Signature Harness는 "큰 런타임 제품"이 아니라 "host-native agent 위에서 goal을 안전하게 운행하기 위한 계약/검증 중심 harness"로 구현되어 있다.
 
