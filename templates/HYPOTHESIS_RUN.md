@@ -6,6 +6,9 @@
 ## Active Slice
 <slice id/objective>
 
+## Dynamic Workflow Pattern
+fan-out-and-synthesize | tournament | generate-and-filter | adversarial-verification | loop-until-done | classify-and-act | none
+
 ## Seed
 <seed id/hash>
 

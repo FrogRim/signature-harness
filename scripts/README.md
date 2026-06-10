@@ -17,12 +17,19 @@ py scripts/sh_runtime.py init-state --root .
 py scripts/sh_runtime.py validate-transition --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py hash-manifest --manifest .sh/hash-manifest.json
 py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke.json
+py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
 py scripts/sh_runtime.py write-directive --run-id run_1 --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
 ```
 
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
 Unsafe local execution would violate the resume-check security contract.
+
+`validate-workflow-evidence` checks the dynamic workflow evidence contract. It
+accepts only the canonical patterns, validates the cost gate, confirms that done
+records have evidence, and reports whether Oracle may treat the workflow as
+completion-eligible. A valid schema with `completion_allowed: false` should
+become an Oracle `INCOMPLETE` verdict and an orchestration `GAP_FILL` slice.
 
 ## Fallback Local Install
 

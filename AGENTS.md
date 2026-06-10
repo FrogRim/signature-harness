@@ -50,6 +50,8 @@ Existing utility skills remain available when they fit the routed loop:
 - Run `rule-memory-read` before planning broad work; do not stuff every rule or preference into the active prompt.
 - Prefer deterministic/mechanical authority before LLM fallback: inspect, test, parse, typecheck, and score before speculating.
 - Use `scripts/sh_runtime.py` for deterministic substrate checks when applicable: state transitions, hash manifests, directive writing, ledger appends, and resume-check contract validation.
+- Use dynamic workflows only after a cost gate proves coordination value. Canonical patterns are `classify-and-act`, `fan-out-and-synthesize`, `adversarial-verification`, `generate-and-filter`, `tournament`, and `loop-until-done`.
+- Validate dynamic workflow completion evidence with `scripts/sh_runtime.py validate-workflow-evidence`; if `completion_allowed` is false, route to `GAP_FILL` for missing records instead of repeating the whole workflow.
 - Ask only when the missing decision would materially change execution or risk.
 - Prefer critical, evidence-backed disagreement over agreeable optimism.
 - Treat `orchestration-loop` as a read-only control plane. It may write `.sh/orchestration/` receipts/directives and minimal ledger steering events, but it must not edit source files or implement fixes.
@@ -83,6 +85,7 @@ When a runtime exists, use `.sh/`:
 - `.sh/candidates/`
 - `.sh/promotions/`
 - `.sh/hypotheses/`
+- `.sh/workflows/`
 - `.sh/gaps/`
 - `.sh/ledger.jsonl`
 - `.sh/evidence/`

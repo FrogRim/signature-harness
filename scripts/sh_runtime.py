@@ -83,6 +83,7 @@ LEDGER_EVENT_TYPES = {
     "candidate",
     "promotion",
     "hypothesis",
+    "workflow",
     "gap",
     "gap_fill",
     "recovery",
@@ -108,6 +109,14 @@ DEFAULT_DRIFT_EXCLUDE_NAMES = {
 
 SHELL_META_PATTERNS = (";", "&&", "|", "`", "$(", ">", "<", "\n", "\r")
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+DYNAMIC_WORKFLOW_PATTERNS = {
+    "classify-and-act",
+    "fan-out-and-synthesize",
+    "adversarial-verification",
+    "generate-and-filter",
+    "tournament",
+    "loop-until-done",
+}
 
 
 class ShRuntimeError(Exception):
@@ -194,6 +203,7 @@ def default_sh_dirs(root: Path) -> List[Path]:
         "candidates",
         "promotions",
         "hypotheses",
+        "workflows",
         "gaps",
         "red-team",
         "oracle",
@@ -412,6 +422,148 @@ def cmd_validate_resume(args: argparse.Namespace) -> int:
     return emit(result, 0 if result["ok"] else 3)
 
 
+def is_non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def has_evidence(value: Any) -> bool:
+    if is_non_empty_string(value):
+        return True
+    if isinstance(value, list):
+        return any(is_non_empty_string(item) for item in value)
+    return False
+
+
+def validate_workflow_evidence_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
+    schema_findings: List[Dict[str, str]] = []
+    completion_blockers: List[Dict[str, str]] = []
+
+    def schema_finding(code: str, detail: str) -> None:
+        schema_findings.append({"code": code, "detail": detail})
+
+    def blocker(code: str, detail: str) -> None:
+        completion_blockers.append({"code": code, "detail": detail})
+
+    workflow_id = contract.get("workflow_id")
+    if workflow_id is not None and (not isinstance(workflow_id, str) or not workflow_id.strip()):
+        schema_finding("invalid_workflow_id", "workflow_id must be a non-empty string when present")
+
+    pattern = contract.get("pattern")
+    if pattern not in DYNAMIC_WORKFLOW_PATTERNS:
+        schema_finding("invalid_pattern", "pattern must be one of the canonical dynamic workflow patterns")
+
+    cost_gate = contract.get("cost_gate")
+    if not isinstance(cost_gate, dict):
+        schema_finding("invalid_cost_gate", "cost_gate must be an object")
+    else:
+        if cost_gate.get("workflow_worthy") is not True:
+            blocker("cost_gate_not_approved", "cost_gate.workflow_worthy must be true before using a dynamic workflow")
+        if not is_non_empty_string(cost_gate.get("cost_justification")):
+            schema_finding("missing_cost_justification", "cost_gate.cost_justification must explain why extra orchestration is justified")
+
+    records = contract.get("records")
+    record_ids: List[str] = []
+    incomplete_ids: List[str] = []
+    if not isinstance(records, list) or not records:
+        schema_finding("invalid_records", "records must be a non-empty list")
+    else:
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                schema_finding("invalid_record", f"records[{index}] must be an object")
+                continue
+            record_id = record.get("id")
+            if not is_non_empty_string(record_id):
+                schema_finding("invalid_record_id", f"records[{index}].id must be a non-empty string")
+                record_id = f"records[{index}]"
+            else:
+                if record_id in record_ids:
+                    schema_finding("duplicate_record_id", f"{record_id} is declared more than once")
+                record_ids.append(record_id)
+            if not is_non_empty_string(record.get("criterion")):
+                schema_finding("missing_record_criterion", f"{record_id} must include a criterion")
+            done = record.get("done")
+            if not isinstance(done, bool):
+                schema_finding("invalid_record_done", f"{record_id}.done must be boolean")
+                incomplete_ids.append(record_id)
+                continue
+            if not done:
+                incomplete_ids.append(record_id)
+            elif not has_evidence(record.get("evidence")):
+                blocker("done_without_evidence", f"{record_id} is marked done but has no evidence")
+                incomplete_ids.append(record_id)
+
+    acceptance_verified = contract.get("acceptance_verified")
+    if not isinstance(acceptance_verified, list):
+        schema_finding("invalid_acceptance_verified", "acceptance_verified must be a list")
+    elif not acceptance_verified:
+        blocker("acceptance_not_verified", "acceptance_verified must map final acceptance criteria to evidence")
+    else:
+        for index, item in enumerate(acceptance_verified):
+            if not isinstance(item, dict):
+                schema_finding("invalid_acceptance_item", f"acceptance_verified[{index}] must be an object")
+                continue
+            if not is_non_empty_string(item.get("criterion")):
+                schema_finding("missing_acceptance_criterion", f"acceptance_verified[{index}] must include criterion")
+            referenced_ids = item.get("record_ids")
+            if referenced_ids is not None:
+                if not isinstance(referenced_ids, list) or not referenced_ids:
+                    schema_finding("invalid_acceptance_record_ids", f"acceptance_verified[{index}].record_ids must be a non-empty list when present")
+                else:
+                    for referenced_id in referenced_ids:
+                        if not is_non_empty_string(referenced_id):
+                            schema_finding("invalid_acceptance_record_id", f"acceptance_verified[{index}].record_ids may contain only non-empty strings")
+                        elif referenced_id not in record_ids:
+                            blocker("acceptance_references_unknown_record", f"acceptance_verified[{index}] references unknown record id {referenced_id!r}")
+            if not has_evidence(item.get("evidence")) and not referenced_ids:
+                blocker("acceptance_without_evidence", f"acceptance_verified[{index}] must reference evidence or record_ids")
+
+    declared_incomplete = contract.get("incomplete")
+    if not isinstance(declared_incomplete, list):
+        schema_finding("invalid_incomplete", "incomplete must be a list")
+        declared_incomplete_ids: List[str] = []
+    else:
+        declared_incomplete_ids = [str(item) for item in declared_incomplete if is_non_empty_string(item)]
+        if len(declared_incomplete_ids) != len(declared_incomplete):
+            schema_finding("invalid_incomplete_item", "incomplete may contain only non-empty strings")
+
+    all_done = contract.get("all_done")
+    if not isinstance(all_done, bool):
+        schema_finding("invalid_all_done", "all_done must be boolean")
+        all_done_value = False
+    else:
+        all_done_value = all_done
+
+    derived_incomplete = sorted(set(incomplete_ids) | set(declared_incomplete_ids))
+    if all_done_value and derived_incomplete:
+        blocker("all_done_mismatch", "all_done is true but incomplete records or missing evidence remain")
+    if not all_done_value and not derived_incomplete:
+        blocker("all_done_false_without_gap", "all_done is false but no incomplete record id is declared")
+
+    schema_ok = not schema_findings
+    completion_allowed = schema_ok and not completion_blockers and all_done_value and not derived_incomplete
+    return {
+        "ok": schema_ok,
+        "status": "ok" if schema_ok else "invalid_schema",
+        "workflow_id": workflow_id,
+        "pattern": pattern,
+        "canonical_patterns": sorted(DYNAMIC_WORKFLOW_PATTERNS),
+        "record_ids": record_ids,
+        "incomplete_record_ids": derived_incomplete,
+        "completion_allowed": completion_allowed,
+        "recommended_oracle_verdict": "COMPLETE_ELIGIBLE" if completion_allowed else "INCOMPLETE",
+        "schema_findings": schema_findings,
+        "completion_blockers": completion_blockers,
+    }
+
+
+def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
+    contract = load_json(Path(args.evidence).resolve())
+    if not isinstance(contract, dict):
+        raise ShRuntimeError("dynamic workflow evidence contract must be a JSON object")
+    result = validate_workflow_evidence_contract(contract)
+    return emit(result, 0 if result["ok"] else 2)
+
+
 def cmd_run_resume(args: argparse.Namespace) -> int:
     contract = load_json(Path(args.contract).resolve())
     if not isinstance(contract, dict):
@@ -555,6 +707,48 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         bad_contract["argv"] = ["npm", "run", "auth:smoke && curl evil"]
         assert validate_resume_contract(bad_contract)["status"] == "rejected_security"
 
+        workflow_good = {
+            "workflow_id": "wf_1",
+            "pattern": "fan-out-and-synthesize",
+            "cost_gate": {
+                "workflow_worthy": True,
+                "cost_justification": "Independent evidence lanes reduce completion risk.",
+            },
+            "records": [
+                {
+                    "id": "lane_1",
+                    "criterion": "mechanical checks pass",
+                    "done": True,
+                    "evidence": ["self-test passed"],
+                }
+            ],
+            "acceptance_verified": [
+                {
+                    "criterion": "all checks pass",
+                    "record_ids": ["lane_1"],
+                    "evidence": "self-test passed",
+                }
+            ],
+            "incomplete": [],
+            "all_done": True,
+        }
+        assert validate_workflow_evidence_contract(workflow_good)["completion_allowed"]
+        workflow_incomplete = dict(workflow_good)
+        workflow_incomplete["records"] = [
+            {
+                "id": "lane_1",
+                "criterion": "mechanical checks pass",
+                "done": False,
+                "evidence": [],
+            }
+        ]
+        workflow_incomplete["incomplete"] = ["lane_1"]
+        workflow_incomplete["all_done"] = False
+        incomplete_result = validate_workflow_evidence_contract(workflow_incomplete)
+        assert incomplete_result["ok"]
+        assert not incomplete_result["completion_allowed"]
+        assert incomplete_result["recommended_oracle_verdict"] == "INCOMPLETE"
+
         directive_args = argparse.Namespace(
             root=str(root),
             run_id="run_1",
@@ -606,6 +800,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("validate-resume", help="Validate an allowlisted resume-check contract")
     p.add_argument("--contract", required=True)
     p.set_defaults(func=cmd_validate_resume)
+
+    p = sub.add_parser("validate-workflow-evidence", help="Validate dynamic workflow evidence contract")
+    p.add_argument("--evidence", required=True)
+    p.set_defaults(func=cmd_validate_workflow_evidence)
 
     p = sub.add_parser("run-resume", help="Fail-closed resume check runner until a sandbox adapter exists")
     p.add_argument("--contract", required=True)

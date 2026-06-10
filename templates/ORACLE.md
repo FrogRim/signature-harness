@@ -18,6 +18,14 @@ Seed: <seed id/hash or none with reason>
 ## Evidence Map
 - <success criterion> -> <evidence>
 
+## Dynamic Workflow Evidence
+- contract_path:
+- validated_with: `py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>` | not applicable
+- pattern:
+- cost_gate_status:
+- completion_allowed:
+- incomplete_record_ids:
+
 ## Evidence Gap Report
 - gap_id:
   criterion:

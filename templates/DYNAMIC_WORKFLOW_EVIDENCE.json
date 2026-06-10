@@ -1,0 +1,34 @@
+{
+  "workflow_id": "wf_001",
+  "goal_id": "",
+  "seed_id": "",
+  "active_slice": "",
+  "pattern": "fan-out-and-synthesize",
+  "cost_gate": {
+    "workflow_worthy": true,
+    "cost_justification": "Independent lanes can produce comparable evidence.",
+    "fallback": "goal-loop"
+  },
+  "records": [
+    {
+      "id": "lane_1",
+      "owner": "agent-1",
+      "criterion": "The assigned slice has mechanical verification evidence.",
+      "done": true,
+      "evidence": [
+        "command output, artifact path, receipt path, or trace reference"
+      ]
+    }
+  ],
+  "acceptance_verified": [
+    {
+      "criterion": "All workflow lanes needed for the active slice are complete.",
+      "record_ids": [
+        "lane_1"
+      ],
+      "evidence": "Oracle-readable synthesis evidence path or summary"
+    }
+  ],
+  "incomplete": [],
+  "all_done": true
+}

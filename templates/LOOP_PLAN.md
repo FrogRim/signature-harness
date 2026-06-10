@@ -9,6 +9,12 @@
 ## Selected Loop
 <loop type and rationale>
 
+## Dynamic Workflow
+- workflow_worthy: yes | no
+- selected_pattern: classify-and-act | fan-out-and-synthesize | adversarial-verification | generate-and-filter | tournament | loop-until-done | none
+- cost_justification:
+- fallback_static_loop:
+
 ## Tasks
 1. <task>
    - acceptance check:

@@ -26,6 +26,7 @@ Runtime states:
 - red-team receipts
 - oracle receipts
 - evidence hashes and failure signatures
+- dynamic workflow cost-gate and evidence contracts
 - Oracle `evidence_gap_report`
 - Oracle `blocked_receipt`
 - user-fit profile
@@ -107,6 +108,35 @@ Retry is forbidden by default. Approve `retry-once` only when:
 - new evidence or a new constraint changes the next attempt
 - the next attempt is meaningfully different
 - the run has not already consumed its single retry exception
+
+## Dynamic Workflow Routing
+
+Dynamic workflows are not the default. Before dispatching extra agents, fan-out,
+or adversarial panels, run a cost gate:
+
+- Is the active slice too broad, parallel, risky, or adversarial for a static goal loop?
+- Can each lane return comparable evidence?
+- Is there a clear synthesis or tournament rule?
+- Would the extra token/time cost reduce a known failure mode such as agentic laziness, self-preferential bias, or goal drift?
+
+Canonical patterns:
+
+- `classify-and-act` - route the slice by type, then run the matching bounded loop.
+- `fan-out-and-synthesize` - split independent lanes and merge evidence.
+- `adversarial-verification` - assign a separate critic or red-team lane before completion.
+- `generate-and-filter` - produce candidates, then filter with fixed criteria.
+- `tournament` - run competing approaches and select by evidence score.
+- `loop-until-done` - repeat a bounded check/fix loop until Oracle evidence passes or a stop trigger fires.
+
+If the cost gate fails, route to the ordinary goal loop. If it passes, require a
+dynamic workflow evidence contract and validate it mechanically:
+
+```powershell
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
+```
+
+When `completion_allowed` is false, dispatch `GAP_FILL` for the listed
+`incomplete_record_ids`. Do not let the goal loop repeat the whole workflow.
 
 ## Gap Fill
 

@@ -1,11 +1,13 @@
 {
   "name": "signature-harness",
   "interface": {
-    "displayName": "Signature Harness"
+    "displayName": "Signature Harness",
+    "shortDescription": "Goal-loop harness with dynamic workflow contracts"
   },
   "plugins": [
     {
       "name": "signature-harness",
+      "description": "Goal-loop harness with dynamic workflow contracts, orchestration, red-team pressure, staged oracle verification, and user-fit routing.",
       "source": {
         "source": "git-subdir",
         "url": "https://github.com/FrogRim/signature-harness.git",

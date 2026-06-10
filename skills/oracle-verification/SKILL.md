@@ -23,6 +23,7 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 - run trace summary
 - improvement candidates or promotion decisions
 - active-slice target manifest and evidence asset manifest
+- dynamic workflow evidence contract when fan-out, tournament, adversarial verification, generate/filter, classify/act, or loop-until-done was used
 
 ## Method
 
@@ -34,7 +35,8 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 6. Confirm red-team `BLOCK` findings are resolved.
 7. Confirm non-goals and scope boundaries were respected.
 8. Confirm any active memory update passed `promotion-gate`.
-9. Return one verdict with its required control-plane payload:
+9. If a dynamic workflow was used, validate its evidence contract with `scripts/sh_runtime.py validate-workflow-evidence`.
+10. Return one verdict with its required control-plane payload:
    - `COMPLETE` - evidence proves the goal.
    - `INCOMPLETE` - evidence is missing or mismatched; include `evidence_gap_report`.
    - `BLOCKED` - progress needs user input, authority, credentials, or an external state change; include `blocked_receipt`.
@@ -49,6 +51,30 @@ Score each dimension from `0.0` (no drift) to `1.0` (severe drift):
 - `evidence_gap` - completion claim lacks proof.
 
 If any drift score is materially high, return `INCOMPLETE` and recommend `GAP_FILL`, `evolution-loop`, `unstuck`, or clarification. Use `GAP_FILL` only when the Seed remains valid and the missing work is evidence acquisition.
+
+## Dynamic Workflow Evidence
+
+Dynamic workflows must prove that the extra orchestration actually closed the
+active slice. Accept only the canonical patterns:
+
+- `classify-and-act`
+- `fan-out-and-synthesize`
+- `adversarial-verification`
+- `generate-and-filter`
+- `tournament`
+- `loop-until-done`
+
+Use the deterministic substrate:
+
+```powershell
+py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
+```
+
+If the schema is invalid, return `INCOMPLETE` with a missing-proof report for the
+bad contract. If the schema is valid but `completion_allowed` is false, return
+`INCOMPLETE` and point orchestration at the listed `incomplete_record_ids`.
+Do not accept "all agents reported done" unless `acceptance_verified`,
+`incomplete`, and `all_done` agree.
 
 ## Hash Domains
 
@@ -81,6 +107,14 @@ Seed: <seed id/hash or none with reason>
 
 ## Evidence Map
 - <success criterion> -> <evidence>
+
+## Dynamic Workflow Evidence
+- contract_path:
+- validation_status:
+- pattern:
+- cost_gate_status:
+- completion_allowed:
+- incomplete_record_ids:
 
 ## Evidence Gap Report
 - gap_id:

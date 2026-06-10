@@ -106,6 +106,7 @@ The harness should persist runtime state under `.sh/` when implemented as a CLI/
   candidates/         # trace-backed candidate updates; not active by default
   promotions/         # promotion decisions and active-memory updates
   hypotheses/         # parallel hypothesis run summaries and scores
+  workflows/          # dynamic workflow plans and evidence contracts
   gaps/               # gap closure records
   red-team/           # plan/result critique reports
   oracle/             # staged verification receipts
@@ -171,6 +172,7 @@ py scripts/sh_runtime.py init-state --root .
 py scripts/sh_runtime.py validate-transition --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py hash-manifest --manifest .sh/hash-manifest.json
 py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke.json
+py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
 ```
 
 The substrate handles:
@@ -181,6 +183,7 @@ The substrate handles:
 - orchestration directive writing
 - ledger append validation
 - resume-check contract validation
+- dynamic workflow evidence validation
 
 `run-resume` fails closed until a real sandbox adapter exists. Unsafe local execution is not a fallback.
 
@@ -236,6 +239,43 @@ pause goal loop
 ```
 
 Retry is not a default recovery path. A retry is allowed at most once and only when red-team explicitly approves it based on a clear local failure cause, new evidence or a new constraint, and a meaningfully different approach.
+
+## Dynamic Workflows
+
+SH keeps a static goal loop as the floor and uses dynamic workflows only when the
+active slice justifies extra coordination. This avoids turning every task into a
+large agent panel while still supporting work that needs fan-out, adversarial
+verification, tournaments, or bounded repetition.
+
+Before dispatching a dynamic workflow, run a cost gate:
+
+- the active slice is broad, parallel, risky, adversarial, or repeatedly incomplete
+- each lane can return comparable evidence
+- there is a fixed synthesis, filter, or tournament rule
+- the extra token/time cost addresses a known failure mode such as agentic laziness, self-preferential bias, or goal drift
+
+Canonical patterns:
+
+| Pattern | Use When |
+| --- | --- |
+| `classify-and-act` | The request must first be routed by type before choosing the loop. |
+| `fan-out-and-synthesize` | Independent lanes can gather or implement comparable evidence. |
+| `adversarial-verification` | A separate critic/red-team lane must challenge the result. |
+| `generate-and-filter` | Multiple candidates are cheap, but acceptance criteria are strict. |
+| `tournament` | Competing approaches should be scored and one selected. |
+| `loop-until-done` | A bounded check/fix cycle should continue until Oracle evidence passes or a stop trigger fires. |
+
+Dynamic workflow evidence is a first-class Oracle input. Use:
+
+```powershell
+py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
+```
+
+The evidence contract records `pattern`, `cost_gate`, per-lane `records`,
+`acceptance_verified`, `incomplete`, and `all_done`. If the schema is valid but
+`completion_allowed` is false, Oracle returns `INCOMPLETE` and orchestration
+creates a `GAP_FILL` slice for the listed incomplete records. This is not a full
+retry and does not reopen the whole workflow.
 
 ## Termination And Recovery
 
