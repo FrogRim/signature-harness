@@ -1,6 +1,6 @@
 ---
 name: goal-loop
-description: Run Signature Harness goal-loop work. Use when a user wants to turn a goal, project, feature, fix, research task, cleanup, review, or open-ended objective into routed execution with durable checkpoints, red-team pressure, and oracle verification.
+description: Internal Signature Harness module. Invoked by $sh-goal or /sh; not the preferred public command.
 ---
 
 # Goal Loop

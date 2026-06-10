@@ -1,6 +1,6 @@
 ---
 name: rule-memory-read
-description: Select only the active Signature Harness rules relevant to the current goal, active slice, loop type, evidence state, and user-fit profile. Use before broad planning or execution to avoid giant prompts and stale memory.
+description: Internal Signature Harness module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Rule Memory Read

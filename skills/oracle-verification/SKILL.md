@@ -1,6 +1,6 @@
 ---
 name: oracle-verification
-description: Staged Signature Harness completion gate. Use before claiming any non-trivial goal is complete, especially after implementation, review, cleanup, research, evolution, or red-team findings. Maps success criteria to evidence, measures drift, and returns COMPLETE, INCOMPLETE, or BLOCKED.
+description: Internal Signature Harness completion-gate module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Oracle Verification
@@ -82,7 +82,14 @@ bad contract. If the schema is valid but `completion_allowed` is false, return
 `INCOMPLETE` and point orchestration at the listed `incomplete_record_ids`.
 Do not accept "all agents reported done" unless `acceptance_verified`,
 `incomplete`, and `all_done` agree. In manifest-backed artifact mode, evidence
-paths must also appear in `hash-manifest` `evidence_entries`.
+paths must also appear in `hash-manifest` `evidence_assets` with matching
+`sha256` and `size`.
+
+Exit codes:
+
+- `0` - schema valid and `completion_allowed: true`
+- `2` - invalid evidence contract schema
+- `5` - schema valid but incomplete; dispatch `GAP_FILL`
 
 ## Hash Domains
 

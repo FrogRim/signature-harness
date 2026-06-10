@@ -1,6 +1,6 @@
 ---
 name: parallel-hypothesis
-description: Run independent agents or attempts as comparable hypothesis experiments. Use when parallel work tests different strategies, plans, fixes, or research paths.
+description: Internal Signature Harness parallel-evidence module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Parallel Hypothesis

@@ -50,6 +50,36 @@ function Test-SamePath {
   return (Get-NormalizedPath -Path $Left).Equals((Get-NormalizedPath -Path $Right), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Test-PathUnderRoot {
+  param([string]$Path, [string]$Root)
+  $normalizedPath = Get-NormalizedPath -Path $Path
+  $normalizedRoot = Get-NormalizedPath -Path $Root
+  return $normalizedPath.Equals($normalizedRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $normalizedPath.StartsWith($normalizedRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-SafeDestination {
+  param([string]$Destination)
+  foreach ($safeRoot in $script:SafeDestinationRoots) {
+    if (Test-PathUnderRoot -Path $Destination -Root $safeRoot) {
+      return
+    }
+  }
+  throw "Refusing to write outside Signature Harness install roots: $Destination"
+}
+
+function New-BackupPath {
+  param([string]$Destination)
+  $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmmss')
+  $candidate = "$Destination.sh-backup-$stamp"
+  $counter = 0
+  while (Test-Path -LiteralPath $candidate) {
+    $counter += 1
+    $candidate = "$Destination.sh-backup-$stamp-$counter"
+  }
+  return $candidate
+}
+
 function Test-ManagedDirectory {
   param([string]$Path)
   $marker = Join-Path $Path '.signature-harness-install.json'
@@ -72,7 +102,7 @@ function Resolve-ReportedAction {
   switch ($Action) {
     'installed' { return 'would-install' }
     'updated' { return 'would-update' }
-    'overwritten-force' { return 'would-overwrite-force' }
+    'backed-up-force' { return 'would-backup-force' }
     default { return $Action }
   }
 }
@@ -90,11 +120,20 @@ function Copy-ManagedDirectory {
     return
   }
 
+  Assert-SafeDestination -Destination $Destination
+  $backup = $null
   if (Test-Path -LiteralPath $Destination) {
-    if ((Test-ManagedDirectory -Path $Destination) -or $Force) {
-      $action = if ($Force -and -not (Test-ManagedDirectory -Path $Destination)) { 'overwritten-force' } else { 'updated' }
+    $managed = Test-ManagedDirectory -Path $Destination
+    if ($managed) {
+      $action = 'updated'
       if (-not $DryRun) {
         Remove-Item -LiteralPath $Destination -Recurse -Force
+      }
+    } elseif ($Force) {
+      $action = 'backed-up-force'
+      $backup = New-BackupPath -Destination $Destination
+      if (-not $DryRun) {
+        Rename-Item -LiteralPath $Destination -NewName (Split-Path -Leaf $backup)
       }
     } else {
       $Results.Add([ordered]@{ action = 'skipped-conflict'; destination = $Destination; source = $Source }) | Out-Null
@@ -110,7 +149,11 @@ function Copy-ManagedDirectory {
     $marker = New-InstallMarker -Source $Source -Version $Version
     Write-JsonFile -Path (Join-Path $Destination '.signature-harness-install.json') -Payload $marker
   }
-  $Results.Add([ordered]@{ action = (Resolve-ReportedAction -Action $action); destination = $Destination; source = $Source }) | Out-Null
+  $result = [ordered]@{ action = (Resolve-ReportedAction -Action $action); destination = $Destination; source = $Source }
+  if ($backup) {
+    $result.backup = $backup
+  }
+  $Results.Add($result) | Out-Null
 }
 
 function Copy-ManagedFile {
@@ -126,8 +169,10 @@ function Copy-ManagedFile {
     return
   }
 
+  Assert-SafeDestination -Destination $Destination
   $markerPath = "$Destination.signature-harness-install.json"
   $managed = $false
+  $backup = $null
   if (Test-Path -LiteralPath $markerPath) {
     try {
       $json = Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json
@@ -138,8 +183,17 @@ function Copy-ManagedFile {
   }
 
   if (Test-Path -LiteralPath $Destination) {
-    if ($managed -or $Force) {
-      $action = if ($Force -and -not $managed) { 'overwritten-force' } else { 'updated' }
+    if ($managed) {
+      $action = 'updated'
+    } elseif ($Force) {
+      $action = 'backed-up-force'
+      $backup = New-BackupPath -Destination $Destination
+      if (-not $DryRun) {
+        Rename-Item -LiteralPath $Destination -NewName (Split-Path -Leaf $backup)
+        if (Test-Path -LiteralPath $markerPath) {
+          Rename-Item -LiteralPath $markerPath -NewName ((Split-Path -Leaf $backup) + '.signature-harness-install.json')
+        }
+      }
     } else {
       $Results.Add([ordered]@{ action = 'skipped-conflict'; destination = $Destination; source = $Source }) | Out-Null
       return
@@ -153,7 +207,11 @@ function Copy-ManagedFile {
     Copy-Item -LiteralPath $Source -Destination $Destination -Force
     Write-JsonFile -Path $markerPath -Payload (New-InstallMarker -Source $Source -Version $Version)
   }
-  $Results.Add([ordered]@{ action = (Resolve-ReportedAction -Action $action); destination = $Destination; source = $Source }) | Out-Null
+  $result = [ordered]@{ action = (Resolve-ReportedAction -Action $action); destination = $Destination; source = $Source }
+  if ($backup) {
+    $result.backup = $backup
+  }
+  $Results.Add($result) | Out-Null
 }
 
 function Install-Skills {
@@ -196,6 +254,11 @@ $agentsSource = Join-Path $root 'agents'
 $commandsSource = Join-Path $root 'commands'
 $templatesSource = Join-Path $root 'templates'
 $scriptsSource = Join-Path $root 'scripts'
+$script:SafeDestinationRoots = @(
+  (Join-Path $HomeDir '.codex'),
+  (Join-Path $HomeDir '.claude'),
+  (Join-Path $HomeDir '.signature-harness')
+)
 
 if (-not $SkipCodex) {
   $codexRoot = Join-Path $HomeDir '.codex'

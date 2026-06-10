@@ -1,6 +1,6 @@
 ---
 name: red-team
-description: Adversarially critique Signature Harness goals, plans, assumptions, outputs, and completion claims. Use before high-risk execution, before final sign-off, when the assistant seems too agreeable or optimistic, or when sycophancy, hidden assumptions, weak evidence, or scope drift may affect correctness.
+description: Internal Signature Harness adversarial-review module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Red Team

@@ -868,7 +868,7 @@ templates/*
 - `GAP_FILL`/`RECOVERY`에도 heartbeat timeout, critical risk, security violation의 abort transition을 추가했다.
 - `GAP_FILL`에는 3-strikes 이전의 `proof_still_missing` self-loop를 명시했다.
 - `RECOVERY -> BLOCKED`, `PAUSED -> ABORTED` 경로를 추가해 문서의 orchestration route와 상태 머신을 맞췄다.
-- dynamic workflow evidence validator에 `--require-artifacts --root <path>`와 `--evidence-manifest <path>` 옵션을 추가했다. 이 모드에서는 evidence 값이 실제 존재하는 파일이어야 하며, 선택적으로 `hash-manifest`의 `evidence_entries`에 등록된 자산인지까지 확인한다. `goal_id`, `seed_id`, `active_slice`도 필요하다.
+- dynamic workflow evidence validator에 `--require-artifacts --root <path>`와 `--evidence-manifest <path>` 옵션을 추가했다. 이 모드에서는 evidence 값이 실제 존재하는 파일이어야 하며, 선택적으로 `hash-manifest`의 `evidence_assets`에 등록된 자산인지와 현재 파일의 `sha256`/`size`까지 확인한다. `goal_id`, `seed_id`, `active_slice`도 필요하다.
 - `hash-manifest`는 drift target 삭제를 에러로만 처리하지 않고 `status: missing` 항목으로 drift hash에 포함한다.
 - Git diff hash는 우선 `git diff HEAD -- <paths>`를 사용해 staged 변경까지 포함하려고 시도하고, 실패 시 기존 diff 방식으로 fallback한다.
 - ledger append는 `prev_hash`와 `entry_hash`를 기록하는 hash-chain으로 바꿨다.

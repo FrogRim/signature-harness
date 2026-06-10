@@ -1,6 +1,6 @@
 ---
 name: scope-guard
-description: This skill should be used on every task to keep work inside the requested scope. It forces an explicit IN/OUT scope, blocks feature creep, and rejects vague requirements until clarified.
+description: Internal Signature Harness scope module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 # Scope Guard
 

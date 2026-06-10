@@ -1,6 +1,6 @@
 ---
 name: active-slice
-description: Select the current executable slice of a larger Signature Harness goal while preserving the global goal and roadmap. Use before Seed crystallization for broad, staged, or long-running work.
+description: Internal Signature Harness module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Active Slice

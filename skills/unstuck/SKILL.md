@@ -1,6 +1,6 @@
 ---
 name: unstuck
-description: Break Signature Harness stagnation with lateral thinking personas. Use when the loop repeats the same failure, assumptions look wrong, or red-team/oracle findings point to a bad approach rather than a simple missing task.
+description: Internal Signature Harness stagnation-recovery module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Unstuck

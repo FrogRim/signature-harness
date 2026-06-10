@@ -1,6 +1,6 @@
 ---
 name: seed-crystallizer
-description: Convert a normalized Signature Harness goal into an accepted Seed contract. Use before broad, risky, multi-step, or long-running execution, and whenever ambiguity must be scored before implementation.
+description: Internal Signature Harness module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Seed Crystallizer

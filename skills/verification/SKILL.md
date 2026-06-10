@@ -1,6 +1,6 @@
 ---
 name: verification
-description: Use before recording factual claims or declaring Signature Harness progress complete. Enforces primary-source grounding, requirement-to-evidence mapping, and verify-before-completion behavior for goals, research, implementation, review, red-team, and oracle artifacts.
+description: Internal Signature Harness evidence module. Invoked by goal-loop or oracle routing, not directly by general user requests.
 ---
 
 # Verification

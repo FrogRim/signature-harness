@@ -14,6 +14,8 @@ Do not treat the old `research -> spec -> plan -> implement -> review` pipeline 
 
 ## Public Workflow Surface
 
+Public entrypoints are `/sh <goal>` for Claude Code and `$sh-goal` for portable Codex/Claude use. The remaining skills are internal modules routed by the goal loop.
+
 Use the portable skills in this repo:
 
 - `goal-loop` - normalize the request into a goal, choose the loop, run/checkpoint progress, and preserve evidence.
@@ -51,7 +53,7 @@ Existing utility skills remain available when they fit the routed loop:
 - Prefer deterministic/mechanical authority before LLM fallback: inspect, test, parse, typecheck, and score before speculating.
 - Use `scripts/sh_runtime.py` for deterministic substrate checks when applicable: state transitions, hash manifests, directive writing, ledger appends, and resume-check contract validation.
 - Use dynamic workflows only after a cost gate proves coordination value. Canonical patterns are `classify-and-act`, `fan-out-and-synthesize`, `adversarial-verification`, `generate-and-filter`, `tournament`, and `loop-until-done`.
-- Validate dynamic workflow completion evidence with `scripts/sh_runtime.py validate-workflow-evidence`; if `completion_allowed` is false, route to `GAP_FILL` for missing records instead of repeating the whole workflow.
+- Validate dynamic workflow completion evidence with `scripts/sh_runtime.py validate-workflow-evidence`; exit `0` means completion-eligible, exit `2` means invalid schema, and exit `5` means schema-valid but incomplete. If `completion_allowed` is false, route to `GAP_FILL` for missing records instead of repeating the whole workflow.
 - Ask only when the missing decision would materially change execution or risk.
 - Prefer critical, evidence-backed disagreement over agreeable optimism.
 - Treat `orchestration-loop` as a read-only control plane. It may write `.sh/orchestration/` receipts/directives and minimal ledger steering events, but it must not edit source files or implement fixes.

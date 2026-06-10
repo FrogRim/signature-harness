@@ -1,6 +1,6 @@
 ---
 name: orchestration-loop
-description: Read-only Signature Harness control plane. Watches goal-loop state, heartbeat, budgets, red-team/oracle receipts, and no-progress signals, then writes routing receipts or directives without implementing fixes or editing source files.
+description: Internal Signature Harness control-plane module. Invoked by goal-loop or /sh routing, not directly by general user requests.
 ---
 
 # Orchestration Loop
@@ -143,8 +143,9 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence <path>
 Use `--require-artifacts --root <path>` when Oracle completion depends on
 existing evidence files instead of descriptive evidence strings.
 
-When `completion_allowed` is false, dispatch `GAP_FILL` for the listed
-`incomplete_record_ids`. Do not let the goal loop repeat the whole workflow.
+When `completion_allowed` is false or the command exits `5`, dispatch `GAP_FILL`
+for the listed `incomplete_record_ids`. Exit `2` is an invalid evidence contract.
+Do not let the goal loop repeat the whole workflow.
 
 ## Gap Fill
 

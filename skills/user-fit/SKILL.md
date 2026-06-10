@@ -1,6 +1,6 @@
 ---
 name: user-fit
-description: Preserve the user's preferred Signature Harness operating style. Use during goal intake, routing, planning, execution reports, and red-team/oracle gates to adapt autonomy, questioning, rigor, tone, and evidence expectations to the user.
+description: Internal Signature Harness fit module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # User Fit

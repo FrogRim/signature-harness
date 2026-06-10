@@ -1,6 +1,6 @@
 ---
 name: promotion-gate
-description: Decide whether an improvement candidate may update active Signature Harness rules, fit profile, Seed defaults, or strategy memory. Use before any candidate becomes active.
+description: Internal Signature Harness learning gate. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Promotion Gate

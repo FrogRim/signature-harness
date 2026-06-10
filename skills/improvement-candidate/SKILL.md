@@ -1,6 +1,6 @@
 ---
 name: improvement-candidate
-description: Convert trace-backed failures, wins, fit friction, or rule gaps into candidate updates. Use after oracle failures, repeated mistakes, successful reusable patterns, or user corrections. Candidates are not active rules until promotion.
+description: Internal Signature Harness learning module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Improvement Candidate

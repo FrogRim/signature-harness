@@ -54,7 +54,7 @@ Completion requires:
 - every `record` with `done: true` has concrete evidence
 - `acceptance_verified` maps final criteria to evidence
 - artifact-backed mode can resolve evidence values to existing files under the repo root
-- manifest-backed artifact mode can find those files in `hash-manifest` `evidence_entries`
+- manifest-backed artifact mode can find those files in `hash-manifest` `evidence_assets` with matching `sha256` and `size`
 - `incomplete` is empty
 - `all_done` is true
 

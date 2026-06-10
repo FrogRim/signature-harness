@@ -1,6 +1,6 @@
 ---
 name: gap-closure
-description: Record Signature Harness gaps with boundary, closure path, evidence source, and promotion or verification gate. Use when a capability is planned, incomplete, blocked, or intentionally out of scope.
+description: Internal Signature Harness gap-recording module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Gap Closure

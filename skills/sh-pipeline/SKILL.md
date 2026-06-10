@@ -1,6 +1,6 @@
 ---
 name: sh-pipeline
-description: Compatibility wrapper for older Signature Harness prompts that ask for the fixed research/spec/plan/implement/review pipeline. Use this only to redirect the request into the newer goal-loop runtime with red-team and oracle verification.
+description: Deprecated Signature Harness compatibility wrapper. Prefer $sh-goal or /sh for all new work.
 ---
 
 # Signature Harness Compatibility Wrapper

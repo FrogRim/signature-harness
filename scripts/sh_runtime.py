@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 
 EXECUTION_STATES = {"RUNNING", "GAP_FILL", "RECOVERY"}
@@ -137,6 +137,7 @@ RESERVED_DIRECTIVE_KEYS = {
     "oracle_recheck_required",
     "heartbeat_policy",
 }
+RESERVED_LEDGER_KEYS = {"prev_hash", "entry_hash"}
 DYNAMIC_WORKFLOW_PATTERNS = {
     "classify-and-act",
     "fan-out-and-synthesize",
@@ -372,6 +373,10 @@ def cmd_hash_manifest(args: argparse.Namespace) -> int:
     manifest = load_json(manifest_path)
     root_raw = args.root or manifest.get("root") or "."
     root = (manifest_path.parent / root_raw).resolve() if not Path(root_raw).is_absolute() else Path(root_raw).resolve()
+    return emit(build_hash_manifest(root, manifest))
+
+
+def build_hash_manifest(root: Path, manifest: Dict[str, Any]) -> Dict[str, Any]:
     drift_targets = manifest.get("drift_targets") or []
     evidence_assets = manifest.get("evidence_assets") or []
     if not isinstance(drift_targets, list) or not isinstance(evidence_assets, list):
@@ -396,7 +401,7 @@ def cmd_hash_manifest(args: argparse.Namespace) -> int:
         "evidence_assets": evidence_entries,
         "excluded_from_drift": sorted(exclude_names),
     }
-    return emit(payload)
+    return payload
 
 
 def has_shell_meta(value: str) -> Optional[str]:
@@ -571,35 +576,63 @@ def evidence_artifact_path(root: Path, value: str) -> Optional[Path]:
     return path
 
 
-def manifest_evidence_paths(manifest: Optional[Dict[str, Any]]) -> Optional[set[str]]:
+def manifest_evidence_entries(manifest: Optional[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, Any]]]:
     if manifest is None:
         return None
-    entries = manifest.get("evidence_entries")
+    entries = manifest.get("evidence_assets")
     if not isinstance(entries, list):
-        return set()
-    paths = set()
+        entries = manifest.get("evidence_entries")
+    if not isinstance(entries, list):
+        return {}
+    result: Dict[str, Dict[str, Any]] = {}
     for entry in entries:
         if isinstance(entry, dict) and is_non_empty_string(entry.get("path")):
-            paths.add(entry["path"].replace("\\", "/"))
-    return paths
+            result[entry["path"].replace("\\", "/")] = entry
+    return result
 
 
 def validate_workflow_artifacts(
     root: Path,
     evidence_values: List[str],
     evidence_manifest: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, str]]:
+) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], Optional[str]]:
     findings: List[Dict[str, str]] = []
-    manifest_paths = manifest_evidence_paths(evidence_manifest)
+    current_entries: List[Dict[str, Any]] = []
+    manifest_entries = manifest_evidence_entries(evidence_manifest)
+    seen: Set[str] = set()
     for value in evidence_values:
         artifact = evidence_artifact_path(root, value)
         if artifact is None:
             findings.append({"code": "evidence_artifact_missing", "detail": f"evidence item is not an existing artifact under root: {value!r}"})
             continue
         rel = rel_posix(artifact, root)
-        if manifest_paths is not None and rel not in manifest_paths:
+        if rel in seen:
+            continue
+        seen.add(rel)
+        stat = artifact.stat()
+        current_entry = {
+            "path": rel,
+            "status": "present",
+            "sha256": file_sha256(artifact),
+            "size": stat.st_size,
+        }
+        current_entries.append(current_entry)
+        if manifest_entries is None:
+            continue
+        manifest_entry = manifest_entries.get(rel)
+        if manifest_entry is None:
             findings.append({"code": "evidence_not_in_manifest", "detail": f"evidence artifact is not registered in hash manifest: {rel!r}"})
-    return findings
+            continue
+        manifest_status = manifest_entry.get("status")
+        if manifest_status not in (None, "present"):
+            findings.append({"code": "evidence_manifest_status_invalid", "detail": f"{rel!r} has non-present manifest status: {manifest_status!r}"})
+            continue
+        if manifest_entry.get("sha256") != current_entry["sha256"]:
+            findings.append({"code": "evidence_hash_mismatch", "detail": f"{rel!r} content differs from manifest"})
+        if manifest_entry.get("size") != current_entry["size"]:
+            findings.append({"code": "evidence_size_mismatch", "detail": f"{rel!r} size differs from manifest"})
+    current_entries = sorted(current_entries, key=lambda entry: entry["path"])
+    return findings, current_entries, json_sha256(current_entries) if current_entries else None
 
 
 def validate_workflow_evidence_contract(
@@ -612,6 +645,8 @@ def validate_workflow_evidence_contract(
     schema_findings: List[Dict[str, str]] = []
     completion_blockers: List[Dict[str, str]] = []
     artifact_evidence: List[str] = []
+    artifact_evidence_assets: List[Dict[str, Any]] = []
+    artifact_evidence_hash: Optional[str] = None
 
     def schema_finding(code: str, detail: str) -> None:
         schema_findings.append({"code": code, "detail": detail})
@@ -724,7 +759,8 @@ def validate_workflow_evidence_contract(
         if root is None:
             schema_finding("missing_root", "root is required when artifact-backed validation is enabled")
         else:
-            completion_blockers.extend(validate_workflow_artifacts(root, artifact_evidence, evidence_manifest))
+            artifact_findings, artifact_evidence_assets, artifact_evidence_hash = validate_workflow_artifacts(root, artifact_evidence, evidence_manifest)
+            completion_blockers.extend(artifact_findings)
 
     schema_ok = not schema_findings
     completion_allowed = schema_ok and not completion_blockers and all_done_value and not derived_incomplete
@@ -736,6 +772,8 @@ def validate_workflow_evidence_contract(
         "canonical_patterns": sorted(DYNAMIC_WORKFLOW_PATTERNS),
         "record_ids": record_ids,
         "artifact_evidence_count": len(artifact_evidence),
+        "artifact_evidence_assets": artifact_evidence_assets,
+        "artifact_evidence_hash": artifact_evidence_hash,
         "incomplete_record_ids": derived_incomplete,
         "completion_allowed": completion_allowed,
         "recommended_oracle_verdict": "COMPLETE_ELIGIBLE" if completion_allowed else "INCOMPLETE",
@@ -760,7 +798,11 @@ def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
         require_artifacts=args.require_artifacts,
         evidence_manifest=evidence_manifest,
     )
-    return emit(result, 0 if result["ok"] else 2)
+    if not result["ok"]:
+        return emit(result, 2)
+    if not result["completion_allowed"]:
+        return emit(result, 5)
+    return emit(result)
 
 
 def cmd_run_resume(args: argparse.Namespace) -> int:
@@ -856,6 +898,9 @@ def cmd_append_ledger(args: argparse.Namespace) -> int:
 
 
 def normalize_ledger_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    reserved = sorted(set(entry) & RESERVED_LEDGER_KEYS)
+    if reserved:
+        raise ShRuntimeError("ledger entry attempts to set chain-reserved keys", payload={"reserved_keys": reserved})
     event_type = entry.get("event_type") or entry.get("Event Type")
     if event_type not in LEDGER_EVENT_TYPES:
         raise ShRuntimeError(f"Unknown ledger event_type: {event_type!r}")
@@ -888,13 +933,62 @@ def last_ledger_entry_hash(ledger: Path) -> str:
 def append_ledger_entry(ledger: Path, normalized: Dict[str, Any]) -> Dict[str, Any]:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     chained = dict(normalized)
-    chained["prev_hash"] = chained.get("prev_hash") or last_ledger_entry_hash(ledger)
+    chained["prev_hash"] = last_ledger_entry_hash(ledger)
     unsigned = dict(chained)
     unsigned.pop("entry_hash", None)
     chained["entry_hash"] = json_sha256(unsigned)
     with ledger.open("a", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(chained, sort_keys=True, separators=(",", ":")) + "\n")
     return chained
+
+
+def verify_ledger(ledger: Path) -> Dict[str, Any]:
+    if not ledger.exists():
+        return {"ok": True, "ledger": str(ledger), "line_count": 0, "last_hash": "sha256:0"}
+    expected_prev_hash = "sha256:0"
+    line_count = 0
+    with ledger.open("r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            line_count += 1
+            try:
+                entry = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                return {"ok": False, "ledger": str(ledger), "line": lineno, "error": f"invalid_json: {exc}"}
+            if not isinstance(entry, dict):
+                return {"ok": False, "ledger": str(ledger), "line": lineno, "error": "entry_not_object"}
+            if entry.get("prev_hash") != expected_prev_hash:
+                return {
+                    "ok": False,
+                    "ledger": str(ledger),
+                    "line": lineno,
+                    "error": "prev_hash_mismatch",
+                    "expected_prev_hash": expected_prev_hash,
+                    "actual_prev_hash": entry.get("prev_hash"),
+                }
+            entry_hash = entry.get("entry_hash")
+            unsigned = dict(entry)
+            unsigned.pop("entry_hash", None)
+            actual_hash = json_sha256(unsigned)
+            if entry_hash != actual_hash:
+                return {
+                    "ok": False,
+                    "ledger": str(ledger),
+                    "line": lineno,
+                    "error": "entry_hash_mismatch",
+                    "expected_entry_hash": actual_hash,
+                    "actual_entry_hash": entry_hash,
+                }
+            expected_prev_hash = entry_hash
+    return {"ok": True, "ledger": str(ledger), "line_count": line_count, "last_hash": expected_prev_hash}
+
+
+def cmd_verify_ledger(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    result = verify_ledger(root / ".sh" / "ledger.jsonl")
+    return emit(result, 0 if result["ok"] else 6)
 
 
 def cmd_self_test(_: argparse.Namespace) -> int:
@@ -999,21 +1093,40 @@ def cmd_self_test(_: argparse.Namespace) -> int:
             }
         ]
         assert validate_workflow_evidence_contract(workflow_artifact, root=root, require_artifacts=True)["completion_allowed"]
-        workflow_manifest = {
-            "evidence_entries": [
-                {
-                    "path": "coverage/workflow.txt",
-                    "status": "present",
-                    "sha256": file_sha256(evidence_artifact),
-                    "size": evidence_artifact.stat().st_size,
-                }
-            ]
+        workflow_manifest = build_hash_manifest(
+            root,
+            {
+                "drift_targets": ["src/missing.txt"],
+                "evidence_assets": ["coverage/workflow.txt"],
+            },
+        )
+        assert workflow_manifest["evidence_assets"][0]["path"] == "coverage/workflow.txt"
+        artifact_manifest_result = validate_workflow_evidence_contract(
+            workflow_artifact,
+            root=root,
+            require_artifacts=True,
+            evidence_manifest=workflow_manifest,
+        )
+        assert artifact_manifest_result["completion_allowed"]
+        assert artifact_manifest_result["artifact_evidence_hash"].startswith("sha256:")
+        evidence_artifact.write_text("changed\n", encoding="utf-8")
+        stale_manifest_result = validate_workflow_evidence_contract(
+            workflow_artifact,
+            root=root,
+            require_artifacts=True,
+            evidence_manifest=workflow_manifest,
+        )
+        assert not stale_manifest_result["completion_allowed"]
+        assert any(item["code"] == "evidence_hash_mismatch" for item in stale_manifest_result["completion_blockers"])
+        evidence_artifact.write_text("passed\n", encoding="utf-8")
+        legacy_workflow_manifest = {
+            "evidence_entries": workflow_manifest["evidence_assets"],
         }
         assert validate_workflow_evidence_contract(
             workflow_artifact,
             root=root,
             require_artifacts=True,
-            evidence_manifest=workflow_manifest,
+            evidence_manifest=legacy_workflow_manifest,
         )["completion_allowed"]
         empty_manifest_result = validate_workflow_evidence_contract(
             workflow_artifact,
@@ -1061,8 +1174,20 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         entry_path = root / "entry.json"
         write_json(entry_path, {"event_type": "gap_fill", "summary": "self-test"})
         normalized = normalize_ledger_entry(load_json(entry_path))
-        append_ledger_entry(root / ".sh" / "ledger.jsonl", normalized)
-        assert (root / ".sh" / "ledger.jsonl").exists()
+        ledger = root / ".sh" / "ledger.jsonl"
+        append_ledger_entry(ledger, normalized)
+        write_json(entry_path, {"event_type": "oracle", "summary": "self-test"})
+        append_ledger_entry(ledger, normalize_ledger_entry(load_json(entry_path)))
+        assert verify_ledger(ledger)["ok"]
+        try:
+            normalize_ledger_entry({"event_type": "gap_fill", "prev_hash": "sha256:attacker-controlled"})
+            raise AssertionError("reserved prev_hash was accepted")
+        except ShRuntimeError:
+            pass
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+        lines[0] = lines[0].replace("gap_fill", "aborted")
+        ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        assert not verify_ledger(ledger)["ok"]
 
     return emit({"ok": True, "self_test": "passed"})
 
@@ -1095,7 +1220,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence", required=True)
     p.add_argument("--root")
     p.add_argument("--require-artifacts", action="store_true")
-    p.add_argument("--evidence-manifest", help="hash-manifest output whose evidence_entries must include evidence artifacts")
+    p.add_argument("--evidence-manifest", help="hash-manifest output whose evidence_assets must include evidence artifacts")
     p.set_defaults(func=cmd_validate_workflow_evidence)
 
     p = sub.add_parser("run-resume", help="Fail-closed resume check runner until a sandbox adapter exists")
@@ -1121,6 +1246,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default=".")
     p.add_argument("--entry", required=True)
     p.set_defaults(func=cmd_append_ledger)
+
+    p = sub.add_parser("verify-ledger", help="Verify .sh/ledger.jsonl hash-chain integrity")
+    p.add_argument("--root", default=".")
+    p.set_defaults(func=cmd_verify_ledger)
 
     p = sub.add_parser("self-test", help="Run built-in substrate tests")
     p.set_defaults(func=cmd_self_test)

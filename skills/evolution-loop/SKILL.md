@@ -1,6 +1,6 @@
 ---
 name: evolution-loop
-description: Reflect on failed, incomplete, or drifting Signature Harness work and create the next Seed generation. Use after oracle failure, repeated red-team findings, or quality/stagnation signals.
+description: Internal Signature Harness recovery module. Invoked by goal-loop or orchestration routing, not directly by general user requests.
 ---
 
 # Evolution Loop

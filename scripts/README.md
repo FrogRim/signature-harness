@@ -22,6 +22,7 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
 py scripts/sh_runtime.py write-directive --run-id run_1 --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
+py scripts/sh_runtime.py verify-ledger --root .
 ```
 
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
@@ -35,12 +36,18 @@ contract is rejected.
 `validate-workflow-evidence` checks the dynamic workflow evidence contract. It
 accepts only the canonical patterns, validates the cost gate, confirms that done
 records have evidence, and reports whether Oracle may treat the workflow as
-completion-eligible. A valid schema with `completion_allowed: false` should
-become an Oracle `INCOMPLETE` verdict and an orchestration `GAP_FILL` slice.
+completion-eligible. Exit code `0` means `COMPLETE_ELIGIBLE`, `2` means invalid
+schema, and `5` means schema-valid but `INCOMPLETE`. A valid schema with
+`completion_allowed: false` should become an Oracle `INCOMPLETE` verdict and an
+orchestration `GAP_FILL` slice.
 Use `--require-artifacts --root <path>` when completion must be backed by
 existing evidence files rather than descriptive strings. Add
 `--evidence-manifest <path>` to require those files to appear in a prior
-`hash-manifest` output's `evidence_entries`.
+`hash-manifest` output's `evidence_assets` with matching `sha256` and `size`.
+
+`append-ledger` writes `prev_hash` and `entry_hash`; callers may not provide
+chain-reserved keys. `verify-ledger` checks the full hash chain and exits `6`
+on the first integrity failure.
 
 ## Fallback Local Install
 
@@ -70,4 +77,6 @@ The installer is marker-based:
 
 - directories/files previously installed by Signature Harness are updated
 - existing unmarked user files are skipped as conflicts
-- `-Force` is required to overwrite an unmarked target
+- run `-DryRun` before forceful local development installs
+- `-Force` backs up an unmarked target to `*.sh-backup-<timestamp>` before installing
+- all writes are limited to `.codex`, `.claude`, and `.signature-harness` under the selected `-HomeDir`

@@ -44,20 +44,21 @@ Keep the public surface small.
 
 | Surface | Purpose |
 | --- | --- |
-| `/sh <goal>` | Short Claude Code entrypoint for a goal loop. |
-| `/signature-harness:sh <goal>` | Claude Code entrypoint for a goal loop. |
-| `sh-goal` / `goal-loop` skill | Portable Codex/Claude skill for goal intake, routing, execution, and verification. |
+| `/sh <goal>` | Primary Claude Code entrypoint for a goal loop. |
+| `/signature-harness:sh <goal>` | Namespaced Claude Code alias for the same entrypoint. |
+| `$sh-goal` | Primary portable Codex/Claude skill entrypoint. |
+
+Internal modules are invoked by `/sh`, `$sh-goal`, `goal-loop`, or orchestration routing. They are not the preferred public command surface.
+
+| Surface | Purpose |
+| --- | --- |
+| `goal-loop` skill | Single canonical SH operating contract used by `$sh-goal`. |
 | `orchestration-loop` skill | Read-only control plane that watches goal-loop state and routes pause, evolve, unstuck, abort, or exception retry directives. |
 | `seed-crystallizer` skill | Convert a normalized goal into a stable executable Seed. |
 | `red-team` skill | Adversarial critique for plans, assumptions, completion claims, and sycophancy. |
 | `oracle-verification` skill | Staged evidence gate before any goal is marked complete. |
 | `evolution-loop` skill | Reflect on failed or incomplete results and create the next Seed generation. |
 | `unstuck` skill | Use lateral thinking personas when the loop stagnates or assumptions look wrong. |
-
-Internal learning gates:
-
-| Surface | Purpose |
-| --- | --- |
 | `active-slice` skill | Select the currently executable slice of a larger goal. |
 | `rule-memory-read` skill | Read only the rules relevant to the active slice and current loop state. |
 | `improvement-candidate` skill | Convert trace-backed failures or wins into candidate updates. |
@@ -146,10 +147,6 @@ After Codex loads the plugin or fallback skill install, use:
 
 ```text
 $sh-goal
-$goal-loop
-$orchestration-loop
-$red-team
-$oracle-verification
 ```
 
 Fallback/development install:
@@ -158,7 +155,7 @@ Fallback/development install:
 powershell -ExecutionPolicy Bypass -File scripts/install_local.ps1
 ```
 
-The fallback installer copies portable skills to the user-local Codex/Claude skill folders, installs the Claude slash commands as `/sh` and `/signature-harness:sh`, and copies a self-contained source/runtime bundle into `~/.signature-harness`. It skips existing unmarked user files unless `-Force` is passed.
+The fallback installer copies portable skills to the user-local Codex/Claude skill folders, installs the Claude slash commands as `/sh` and `/signature-harness:sh`, and copies a self-contained source/runtime bundle into `~/.signature-harness`. It skips existing unmarked user files by default. For local development, run `-DryRun` first; `-Force` backs up unmarked targets to `*.sh-backup-<timestamp>` instead of deleting them.
 
 ## Runtime Substrate
 
@@ -175,6 +172,7 @@ py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
+py scripts/sh_runtime.py verify-ledger --root .
 ```
 
 The substrate handles:
@@ -184,6 +182,7 @@ The substrate handles:
 - `drift_hash` / `evidence_hash` calculation from active-slice manifests
 - orchestration directive writing
 - ledger append validation with `prev_hash` / `entry_hash` chaining
+- ledger hash-chain verification
 - resume-check contract validation
 - dynamic workflow evidence validation
 
@@ -283,7 +282,9 @@ By default, the workflow evidence validator checks schema and consistency. With
 `--require-artifacts --root <path>`, evidence values must point at existing files
 under the root, and `goal_id`, `seed_id`, and `active_slice` must be present.
 Add `--evidence-manifest <path>` to require those files to appear in a prior
-`hash-manifest` output's `evidence_entries`.
+`hash-manifest` output's `evidence_assets` with matching `sha256` and `size`.
+`validate-workflow-evidence` exits `0` only when completion is eligible, `2` for
+invalid schema, and `5` for schema-valid incomplete evidence.
 
 ## Termination And Recovery
 
