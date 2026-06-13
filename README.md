@@ -1,822 +1,260 @@
 # Signature Harness (SH)
 
-> Personal goal-loop runtime for Codex and Claude Code. The harness is optimized for running a user's goals with explicit scope, adversarial pressure, durable evidence, and a user-fit operating style.
-
-## Portfolio Snapshot
-
-Signature Harness is a **repo-local completion-auditor harness for AI coding agents**. It is built around one failure mode: agents often say a goal is done before the evidence proves it, or keep working after the useful loop should have stopped.
-
-SH turns that problem into a small operating system for goal loops:
+개인용 goal-loop 하네스입니다. Codex와 Claude Code에서 같은 작업 철학을 쓰기 위해 만든 portable skill/runtime bundle이며, 목적은 하나입니다.
 
 ```text
-Goal -> Seed -> Active Slice -> Orchestration -> Execution -> Evidence -> Oracle -> Complete / Gap Fill / Blocked / Evolve
+목표를 Seed로 고정하고, Active Slice로 좁히고, 실행 증거를 남긴 뒤, Oracle 검증을 통과할 때만 완료한다.
 ```
 
-Current status:
+SH는 범용 비서가 아니라 **AI coding-agent completion auditor**에 초점을 둔 하네스입니다. 에이전트가 “끝났다”고 말하는 순간을 그대로 믿지 않고, trace, artifact, eval, state transition으로 검증합니다.
 
-| Claim | Status | Evidence |
-| --- | --- | --- |
-| Strong harness MVP | Defensible | `docs/scorecards/sh-runtime-evals-scorecard.md` reports **95 / 100 repo-local**. |
-| Runnable runtime substrate | Implemented | `scripts/sh_runtime.py` creates run state, trace, replay, ledger, eval, and policy artifacts. |
-| Artifact-backed completion gate | Implemented | Evidence-less completion is rejected by `validate-workflow-evidence --require-artifacts`. |
-| Eval suite | Implemented | `evals/benchmark_tasks.jsonl` has 20 tasks, 3 trials each; latest run passed 60/60. |
-| Security policy substrate | Implemented | `security/policy.json` and `validate-policy` enforce permission profiles and allowlists. |
-| Product-grade sandboxed execution | Not claimed | `run-resume` intentionally fails closed until a real sandbox adapter exists. |
-| Host-level Claude/Codex E2E proof | Not claimed | Current proof is repo-local, not full host orchestration. |
+## 현재 상태
 
-The short version: this is no longer just prompts or docs. It has executable state, traces, replay, schemas, eval fixtures, failure taxonomy, permission checks, and adversarial QA evidence. It is still not a vertical product until sandboxed resume execution, host integration, and real run corpus are added.
+| 항목 | 상태 |
+| --- | --- |
+| Codex/Claude용 portable skills | 구현됨 |
+| `/sh`, `$sh-goal` entrypoint | 구현됨 |
+| deterministic runtime substrate | 구현됨 |
+| run manifest / state / trace / replay / ledger | 구현됨 |
+| artifact-backed evidence gate | 구현됨 |
+| benchmark / regression eval suite | 구현됨 |
+| permission policy / approval artifact | 구현됨 |
+| Completion Auditor hang/remediation gate | 구현됨 |
+| real sandbox adapter for unsafe resume | 아직 미구현, fail-closed |
+| full host-level Claude/Codex E2E orchestration proof | 아직 claim하지 않음 |
 
-## Architecture At A Glance
+이 저장소는 다른 머신에서 `git pull` 후 바로 설치해서 쓰는 것을 우선합니다. 포트폴리오용 긴 문서와 HTML 산출물은 원격 저장소에 포함하지 않습니다.
+
+## 핵심 흐름
 
 ```mermaid
 flowchart TD
   A["User Goal"] --> B["Goal Intake"]
-  B --> C["Seed Crystallizer"]
+  B --> C["Seed"]
   C --> D["Active Slice"]
   D --> E["Orchestration Loop"]
   E --> F["Goal Loop Execution"]
-  F --> G["Trace / Ledger / Artifacts"]
+  F --> G["Trace / Ledger / Evidence"]
   G --> H["Oracle Verification"]
-  H -->|COMPLETE| I["Close Run"]
-  H -->|INCOMPLETE verdict| J["GAP_FILL slice"]
-  H -->|Hang artifact| N["REMEDIATING"]
-  H -->|BLOCKED| K["Blocked Receipt + Rehydration Gate"]
-  H -->|Drift / No Progress| L["Red-team / Evolution / Unstuck"]
-  N --> J
+  H -->|COMPLETE| I["Close"]
+  H -->|INCOMPLETE| J["GAP_FILL"]
+  H -->|Hang artifact| K["REMEDIATING"]
+  H -->|BLOCKED| L["BLOCKED"]
+  H -->|Drift / No Progress| M["Red-team / Evolution / Unstuck"]
+  K --> J
   J --> F
-  K --> M["RECOVERY"]
-  M --> F
-  L --> C
+  L --> N["RECOVERY"]
+  N --> F
+  M --> C
 ```
 
-Control-plane rule:
+핵심 원칙:
 
-```text
-orchestration-loop watches, routes, pauses, blocks, and dispatches.
-goal-loop and execution tools do the actual work.
-oracle-verification is the only path to COMPLETE.
-```
+- `orchestration-loop`는 관제센터다. 직접 구현하거나 파일을 수정하지 않고, route/directive만 만든다.
+- `goal-loop`는 실제 전차다. Active Slice 범위 안에서 실행하고 증거를 남긴다.
+- `oracle-verification`을 통과하지 않으면 완료가 아니다.
+- `INCOMPLETE`는 runtime state가 아니라 verdict다. 보통 `GAP_FILL`로 좁혀 다시 실행한다.
+- 외부 runner hang artifact는 예외적으로 `REMEDIATING`으로 들어간 뒤 cleanup/reset evidence를 요구한다.
 
-## What Was Built
+## 공개 사용면
 
-| Layer | What exists | Why it matters |
-| --- | --- | --- |
-| Goal loop contract | `skills/goal-loop`, `/sh`, `$sh-goal` | Keeps the public workflow surface small and goal-centered. |
-| Runtime state | `.sh/runs/<run_id>/run_manifest.json`, `state.json`, `step_ledger.jsonl`, `handoff.md` | A new session or reviewer can reconstruct the run without trusting chat history. |
-| Trace and replay | `trace.jsonl`, `tool_calls.jsonl`, `cost_latency.json`, `replay.json` | Completion claims can be tied to machine-readable evidence. |
-| State machine | `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING`, `PAUSED`, `BLOCKED`, `COMPLETE`, `ABORTED` | Invalid transitions fail closed instead of becoming LLM judgment calls. |
-| Oracle gate | `validate-workflow-evidence`, evidence manifests, gap-fill verdicts | "Done" requires artifacts, not descriptive confidence. |
-| Red-team pressure | `skills/red-team`, UltraQA negative probes | Optimism, sycophancy, no-progress loops, and false completion are treated as defects. |
-| Tool contracts | `schemas/tool_contracts.json` and schema validation | Runtime commands have declared inputs, outputs, exit codes, side effects, and failure modes. |
-| Failure taxonomy | `schemas/failure_taxonomy.json` | Recovery uses structured failure reasons instead of free-text failure reports. |
-| Security policy | `security/policy.json`, `validate-policy` | Read/write/network/shell intent is checked before dangerous actions are accepted. |
-| Eval suite | `evals/benchmark_tasks.jsonl`, `evals/regression_tasks.jsonl` | The harness can be regression-tested as a harness, not just read as a prompt bundle. |
-| Vertical focus | `docs/domain/completion-auditor/` | The first vertical is AI coding-agent completion auditing, not a generic assistant wrapper. |
+기억할 명령은 최소화합니다.
 
-## Latest Verification Evidence
-
-The latest UltraQA recheck produced these artifacts:
-
-```text
-.sh/evals/ultraqa-recheck-20260613-031816-benchmark/eval_result.json
-.sh/evals/ultraqa-recheck-20260613-031816-regression/eval_result.json
-```
-
-Fresh verification summary:
-
-| Check | Result |
+| 환경 | 명령 |
 | --- | --- |
-| `py -m py_compile scripts/sh_runtime.py` | Passed |
-| `py scripts/sh_runtime.py self-test` | Passed |
-| `py scripts/sh_runtime.py validate-schemas --root .` | Passed |
-| `py scripts/sh_runtime.py verify-ledger --root .` | Passed |
-| `claude plugin validate .` | Passed |
-| `git diff --check` | Passed |
-| Benchmark eval | 20 tasks, 60 trials, pass rate 1.0 |
-| Regression eval | 4 tasks, 12 trials, pass rate 1.0 |
-| Evidence-less completion probe | Blocked as `INCOMPLETE` |
-| Non-allowlisted network probe | Blocked as `PERMISSION_DENIED` |
+| Claude Code | `/sh <goal>` |
+| Claude Code namespaced | `/signature-harness:sh <goal>` |
+| Codex / portable skill | `$sh-goal <goal>` |
 
-UltraQA also found and closed four concrete regressions:
+나머지 skill은 내부 module입니다. 직접 부르기보다 `/sh` 또는 `$sh-goal`이 routing하도록 두는 것을 기본으로 합니다.
 
-- `record-step` could force a state transition without a valid transition event.
-- schema validation checked required keys but not field types.
-- evals could pass while referenced expected artifacts were missing.
-- `scoped_network` enforced network allowlists but not filesystem write allowlists.
+## 설치
 
-## Five-Minute Reviewer Path
-
-Run the core checks:
+Windows PowerShell 기준:
 
 ```powershell
-py -m py_compile scripts\sh_runtime.py
+git clone https://github.com/FrogRim/signature-harness.git
+cd signature-harness
+.\scripts\install_local.ps1 -DryRun
+.\scripts\install_local.ps1
+```
+
+덮어쓰기 충돌이 있을 때만:
+
+```powershell
+.\scripts\install_local.ps1 -Force
+```
+
+`-Force`는 기존 unmanaged 디렉토리를 삭제하지 않고 `.sh-backup-<timestamp>`로 백업한 뒤 설치합니다.
+
+## 검증
+
+pull 후 최소 검증:
+
+```powershell
+py -m py_compile scripts\sh_runtime.py scripts\sh_runtime_core.py
 py scripts\sh_runtime.py self-test
 py scripts\sh_runtime.py validate-schemas --root .
-py scripts\sh_runtime.py run-evals --root . --suite evals\benchmark_tasks.jsonl --trials 3 --eval-run-id reviewer-benchmark --reset-existing
-py scripts\sh_runtime.py run-evals --root . --suite evals\regression_tasks.jsonl --trials 3 --eval-run-id reviewer-regression --reset-existing
 py scripts\sh_runtime.py verify-ledger --root .
-claude plugin validate .
 git diff --check
 ```
 
-Read the proof docs:
-
-| Document | Purpose |
-| --- | --- |
-| `docs/scorecards/sh-runtime-evals-scorecard.md` | Current score, evidence map, and non-claims. |
-| `docs/scorecards/ultraqa-sh-hardening-report.md` | Adversarial QA scenarios, failures found, fixes applied. |
-| `docs/exec-plans/active/sh-runtime-evals-observability.md` | Living implementation plan and decision log. |
-| `docs/domain/completion-auditor/rubric.md` | Vertical evaluator rubric. |
-| `docs/domain/completion-auditor/failure-corpus.md` | Domain failure corpus. |
-
-## Honest Boundaries
-
-SH is deliberately precise about what it does not yet prove.
-
-| Missing for 98+ | Current stance |
-| --- | --- |
-| Real sandbox adapter for `run-resume` | Not implemented; unsafe resume execution fails closed. |
-| Full Claude Code / Codex host E2E orchestration | Not claimed; current evidence is repo-local. |
-| LLM or human transcript judge | Not implemented; evals are deterministic fixtures plus substrate validators. |
-| Real user-run corpus | Not accumulated yet; domain corpus is fixture-based. |
-| Vertical product packaging | Not complete; current state is a strong harness MVP and portfolio artifact. |
-
-Signature Harness is no longer a fixed `research -> spec -> plan -> implement -> review` pipeline. That pipeline is only one possible loop. The core unit is now a **Goal**, the executable contract is a **Seed**, and durable learning moves through **candidate -> promotion** gates.
-
-```text
-goal intake
-  -> fit-aware clarification
-  -> goal hierarchy / active slice selection
-  -> ambiguity scoring
-  -> seed crystallization
-  -> rule memory read
-  -> orchestration routing
-  -> red-team pressure on seed/plan
-  -> plan or execute in bounded steps
-  -> trace-backed evidence capture
-  -> oracle verification
-  -> reflect / evolve when quality or drift requires it
-  -> improvement candidate / promotion gate
-  -> ledger checkpoint
-  -> finish / continue / reroute
-```
-
-## Design Target
-
-SH exists to answer one question:
-
-> How well can this harness keep a goal moving to verified completion in a way that fits this user?
-
-That means the harness values:
-
-- durable goal state over hopeful status updates
-- critical feedback over agreeable optimism
-- evidence-backed completion over "looks done"
-- trace-backed learning over vague reflection
-- candidate-only self-improvement over silent memory mutation
-- compact public commands over a sprawling skill zoo
-- user-fit defaults over generic assistant behavior
-
-## Public Workflow Surface
-
-Keep the public surface small.
-
-| Surface | Purpose |
-| --- | --- |
-| `/sh <goal>` | Primary Claude Code entrypoint for a goal loop. |
-| `/signature-harness:sh <goal>` | Namespaced Claude Code alias for the same entrypoint. |
-| `$sh-goal` | Primary portable Codex/Claude skill entrypoint. |
-
-Internal modules are invoked by `/sh`, `$sh-goal`, `goal-loop`, or orchestration routing. They are not the preferred public command surface.
-
-| Surface | Purpose |
-| --- | --- |
-| `goal-loop` skill | Single canonical SH operating contract used by `$sh-goal`. |
-| `orchestration-loop` skill | Read-only control plane that watches goal-loop state and routes pause, evolve, unstuck, abort, or exception retry directives. |
-| `seed-crystallizer` skill | Convert a normalized goal into a stable executable Seed. |
-| `red-team` skill | Adversarial critique for plans, assumptions, completion claims, and sycophancy. |
-| `oracle-verification` skill | Staged evidence gate before any goal is marked complete. |
-| `evolution-loop` skill | Reflect on failed or incomplete results and create the next Seed generation. |
-| `unstuck` skill | Use lateral thinking personas when the loop stagnates or assumptions look wrong. |
-| `active-slice` skill | Select the currently executable slice of a larger goal. |
-| `rule-memory-read` skill | Read only the rules relevant to the active slice and current loop state. |
-| `improvement-candidate` skill | Convert trace-backed failures or wins into candidate updates. |
-| `promotion-gate` skill | Promote candidates only after evidence, QA, and regression checks. |
-| `parallel-hypothesis` skill | Treat subagents as independent hypothesis runs with comparable evidence. |
-| `gap-closure` skill | Attach every known gap to a boundary, closure path, evidence source, and gate. |
-
-Recommended default path:
-
-```text
-goal-loop -> active-slice -> seed-crystallizer -> rule-memory-read -> orchestration-loop -> execute/checkpoint -> oracle-verification
-```
-
-For vague or high-risk goals:
-
-```text
-deep-interview -> seed-crystallizer -> red-team-seed -> approved execution -> oracle-verification
-```
-
-For incomplete, drifting, or stagnant work:
-
-```text
-oracle-verification -> gap-fill for missing proof, or evolution-loop/unstuck for drift/stagnation -> execute/checkpoint
-```
-
-For learning from execution:
-
-```text
-run trace -> improvement-candidate -> promotion-gate -> active rules / fit / seed defaults
-```
-
-## Runtime State
-
-The harness should persist runtime state under `.sh/` when implemented as a CLI/runtime, or use the host agent's native state when running as a pure skill bundle.
-
-```text
-.sh/
-  goals.json          # active and historical goals
-  seeds/              # seed specs, one immutable file per accepted generation
-  rules/              # active rule memory, scoped by loop and user fit
-  runs/               # run traces and event timelines
-  orchestration/      # read-only control-plane receipts and directives
-  ledger.jsonl        # append-only checkpoints, steering, reviews
-  fit.md              # user-fit operating profile
-  evidence/           # command output summaries, review receipts, artifacts
-  candidates/         # trace-backed candidate updates; not active by default
-  promotions/         # promotion decisions and active-memory updates
-  hypotheses/         # parallel hypothesis run summaries and scores
-  workflows/          # dynamic workflow plans and evidence contracts
-  gaps/               # gap closure records
-  red-team/           # plan/result critique reports
-  oracle/             # staged verification receipts
-  evolution/          # generation lineage, reflections, drift summaries
-  unstuck/            # lateral persona reports for stalled work
-```
-
-State is leader-owned. Worker agents may report evidence, but they do not mutate the goal ledger or mark completion.
-
-## Plugin Install
-
-Preferred install path is host-native plugin installation.
-
-Claude Code:
+eval까지 확인:
 
 ```powershell
-claude plugin marketplace add FrogRim/signature-harness
-claude plugin install signature-harness
+py scripts\sh_runtime.py run-evals --root . --suite evals\benchmark_tasks.jsonl --trials 3 --eval-run-id local-benchmark --reset-existing
+py scripts\sh_runtime.py run-evals --root . --suite evals\regression_tasks.jsonl --trials 3 --eval-run-id local-regression --reset-existing
 ```
 
-After restarting Claude Code, use:
+현재 suite 기준:
 
-```text
-/sh <goal>
-/signature-harness:sh <goal>
-```
-
-Codex:
-
-```powershell
-codex plugin marketplace add FrogRim/signature-harness
-```
-
-If the active Codex build exposes plugin enable/install through the app or a newer CLI, enable `signature-harness@signature-harness` after adding the marketplace. Current CLI builds may only register the marketplace source; in that case use the fallback installer for Codex skill files until the host plugin manager enables the plugin.
-
-After Codex loads the plugin or fallback skill install, use:
-
-```text
-$sh-goal
-```
-
-Fallback/development install:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install_local.ps1
-```
-
-The fallback installer copies portable skills to the user-local Codex/Claude skill folders, installs the Claude slash commands as `/sh` and `/signature-harness:sh`, and copies a self-contained source/runtime bundle into `~/.signature-harness`. It skips existing unmarked user files by default. For local development, run `-DryRun` first; `-Force` backs up unmarked targets to `*.sh-backup-<timestamp>` instead of deleting them.
+- benchmark: 23 tasks, 기본 3 trials
+- regression: 5 tasks, 기본 3 trials
 
 ## Runtime Substrate
 
-SH does not require a standalone CLI product. It does require small deterministic helpers for checks that should not be left to an LLM.
+주요 runtime 파일:
 
-Use:
-
-```powershell
-py scripts/sh_runtime.py self-test
-py scripts/sh_runtime.py init-state --root .
-py scripts/sh_runtime.py validate-transition --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
-py scripts/sh_runtime.py hash-manifest --manifest .sh/hash-manifest.json
-py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke.json --receipt .sh/orchestration/blocked/run_1.json
-py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
-py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
-py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
-py scripts/sh_runtime.py verify-ledger --root .
-py scripts/sh_runtime.py start-run --root . --goal-id smoke_goal --seed-id smoke_seed --active-slice smoke_slice --objective "Smoke runtime"
-py scripts/sh_runtime.py replay-run --root . --run-id smoke-runtime
-py scripts/sh_runtime.py validate-schemas --root .
-py scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/read_only_ok.json
-py scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3
-```
-
-The substrate handles:
-
-- state transition validation
-- `.sh` state directory creation
-- `drift_hash` / `evidence_hash` calculation from active-slice manifests
-- orchestration directive writing
-- ledger append validation with `prev_hash` / `entry_hash` chaining
-- ledger hash-chain verification
-- resume-check contract validation
-- dynamic workflow evidence validation
-- durable run lifecycle artifacts under `.sh/runs/<run_id>/`
-- structured trace/tool-call/cost-latency/replay artifacts
-- repo-local schema, tool-contract, failure-taxonomy, eval, and security-policy validation
-- deterministic completion-auditor benchmark fixtures
-
-`run-resume` fails closed until a real sandbox adapter exists. Unsafe local execution is not a fallback.
-
-## Orchestration Control Plane
-
-SH separates the control plane from the action plane.
-
-```text
-Signature Harness = operating system
-orchestration-loop = read-only control plane / dispatch center
-goal-loop = executable unit of work
-executor/tools = action plane that may modify files
-red-team/oracle = safety and verification signals
-```
-
-The orchestration loop may read goal state, run traces, Seed status, active slices, oracle receipts, red-team receipts, budget counters, and heartbeat data. It may write only:
-
-- `.sh/orchestration/` routing receipts
-- `.sh/orchestration/directives/<run_id>.json` pause/reroute/abort directives
-- `.sh/orchestration/blocked/<run_id>.json` blocked receipts and rehydration packets
-- `.sh/orchestration/gap-fill/<run_id>.json` evidence-gap dispatch directives
-- `.sh/orchestration/security/<run_id>.json` security incident receipts
-- minimal steering events to `.sh/ledger.jsonl`
-
-It must not edit project source files, implement fixes, mark a goal complete, mutate an accepted Seed, or update active rule memory/user fit without a promotion gate.
-
-Heartbeat defaults:
-
-```text
-heartbeat tick: 60 seconds
-missed heartbeat: 180 seconds
-hard-abort candidate: 300 seconds
-hard abort allowed only when heartbeat is missing plus process/session unresponsive or critical risk is present
-waiting_user and blocked states are not heartbeat failures
-long commands must declare deadline_at before they start
-```
-
-No-progress defaults:
-
-```text
-same failure signature 3 times
-or same completion claim with unchanged evidence hash 3 times
-or plan-only churn without execution evidence 3 times
-or repeated red-team/oracle finding 3 times
-```
-
-Default response to no-progress:
-
-```text
-pause goal loop
--> red-team review
--> active-slice shrink, evolution-loop, unstuck, or abort
-```
-
-Retry is not a default recovery path. A retry is allowed at most once and only when red-team explicitly approves it based on a clear local failure cause, new evidence or a new constraint, and a meaningfully different approach.
-
-## Dynamic Workflows
-
-SH keeps a static goal loop as the floor and uses dynamic workflows only when the
-active slice justifies extra coordination. This avoids turning every task into a
-large agent panel while still supporting work that needs fan-out, adversarial
-verification, tournaments, or bounded repetition.
-
-Before dispatching a dynamic workflow, run a cost gate:
-
-- the active slice is broad, parallel, risky, adversarial, or repeatedly incomplete
-- each lane can return comparable evidence
-- there is a fixed synthesis, filter, or tournament rule
-- the extra token/time cost addresses a known failure mode such as agentic laziness, self-preferential bias, or goal drift
-
-Canonical patterns:
-
-| Pattern | Use When |
+| 경로 | 역할 |
 | --- | --- |
-| `classify-and-act` | The request must first be routed by type before choosing the loop. |
-| `fan-out-and-synthesize` | Independent lanes can gather or implement comparable evidence. |
-| `adversarial-verification` | A separate critic/red-team lane must challenge the result. |
-| `generate-and-filter` | Multiple candidates are cheap, but acceptance criteria are strict. |
-| `tournament` | Competing approaches should be scored and one selected. |
-| `loop-until-done` | A bounded check/fix cycle should continue until Oracle evidence passes or a stop trigger fires. |
+| `scripts/sh_runtime.py` | CLI runtime, validators, eval runner, trace/replay writer |
+| `scripts/sh_runtime_core.py` | 상태 머신, transition map, 공통 invariant |
+| `schemas/tool_contracts.json` | tool/subcommand contract |
+| `schemas/failure_taxonomy.json` | 구조화된 failure code |
+| `schemas/completion_artifact.schema.json` | Completion Auditor artifact contract |
+| `evals/benchmark_tasks.jsonl` | benchmark suite |
+| `evals/regression_tasks.jsonl` | regression suite |
+| `security/policy.json` | permission/network/filesystem policy |
 
-Dynamic workflow evidence is a first-class Oracle input. Use:
+실행 중 생성되는 상태는 `.sh/` 아래에 생기며, `.gitignore` 대상입니다.
 
-```powershell
-py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
+```text
+.sh/runs/<run_id>/run_manifest.json
+.sh/runs/<run_id>/state.json
+.sh/runs/<run_id>/trace.jsonl
+.sh/runs/<run_id>/tool_calls.jsonl
+.sh/runs/<run_id>/step_ledger.jsonl
+.sh/runs/<run_id>/replay.json
+.sh/evals/<eval_run_id>/eval_result.json
 ```
 
-The evidence contract records `pattern`, `cost_gate`, per-lane `records`,
-`acceptance_verified`, `incomplete`, and `all_done`. If the schema is valid but
-`completion_allowed` is false, Oracle returns `INCOMPLETE` and orchestration
-creates a `GAP_FILL` slice for the listed incomplete records. This is not a full
-retry and does not reopen the whole workflow.
+## 상태 머신
 
-By default, the workflow evidence validator checks schema and consistency. With
-`--require-artifacts --root <path>`, evidence values must point at existing files
-under the root, and `goal_id`, `seed_id`, and `active_slice` must be present.
-Add `--evidence-manifest <path>` to require those files to appear in a prior
-`hash-manifest` output's `evidence_assets` with matching `sha256` and `size`.
-`validate-workflow-evidence` exits `0` only when completion is eligible, `2` for
-invalid schema, and `5` for schema-valid incomplete evidence.
+Core runtime state:
 
-## Termination And Recovery
-
-Oracle verdicts are not all runtime states. `INCOMPLETE` is a verdict only; it usually creates a narrowed `GAP_FILL` execution state instead of an ordinary retry. External-runner hang artifacts are the exception: they create `REMEDIATING` first so cleanup/reset evidence can be gated before returning to `GAP_FILL`.
-
-Runtime states:
-
-| Class | States |
+| 분류 | 상태 |
 | --- | --- |
 | Execution | `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING` |
 | Suspended | `PAUSED`, `BLOCKED` |
 | Terminal | `COMPLETE`, `ABORTED` |
 
-Any transition not listed here is a system-level exception.
+주요 전이:
 
-| Current State | Trigger Event | Next State | Owner / Action |
+| From | Event | To | 의미 |
 | --- | --- | --- | --- |
-| `RUNNING` | Oracle `COMPLETE` | `COMPLETE` | Orchestration writes `close` directive and permanently freezes the loop. |
-| `RUNNING` | Oracle `INCOMPLETE` | `GAP_FILL` | Orchestration keeps the Seed, shrinks the active slice to missing-proof acquisition, and dispatches a gap-fill directive. |
-| `RUNNING`, `GAP_FILL`, `RECOVERY` | External runner hang artifact proves timeout plus no-progress | `REMEDIATING` | Orchestration writes a remediation directive for the external runner; SH does not kill or clean the SUT. |
-| `RUNNING` | Oracle `BLOCKED` | `BLOCKED` | Orchestration dumps blocked receipt and parks the process. |
-| `RUNNING` | Red-team 3-strikes no-progress | `PAUSED` | Red-team/evolution/unstuck chooses a new route before any further execution. |
-| `RUNNING` | Missed heartbeat plus timeout, or critical risk | `ABORTED` | Orchestration hard-stops the run and preserves evidence. |
-| `GAP_FILL` | Missing proof acquired | `RUNNING` | Goal loop may continue only with oracle recheck required. |
-| `GAP_FILL` | Proof still missing 3 times | `PAUSED` | Orchestration pauses and routes to red-team/evolution/unstuck. |
-| `BLOCKED` | Rehydration gate passes | `RECOVERY` | Goal loop resumes in recovery mode with a narrow recovery slice. |
-| `BLOCKED` | Rehydration gate fails | `BLOCKED` | Orchestration keeps the run parked and asks for the missing user/external action. |
-| `RECOVERY` | Recovery evidence validated | `RUNNING` | Orchestration restores the original active-slice authority after oracle recheck. |
-| `RECOVERY` | Drift detected | `PAUSED` | Orchestration routes to evolution, unstuck, or clarification. |
-| `REMEDIATING` | Cleanup/reset evidence valid | `GAP_FILL` | Orchestration reconciles time debt and missing proof before normal execution resumes. |
-| `REMEDIATING` | Cleanup/reset evidence invalid but deadline open | `REMEDIATING` | External runner remains responsible for remediation evidence. |
-| `REMEDIATING` | Cleanup/reset evidence deadline expired | `ABORTED` | Orchestration judges environment control lost and aborts the run. |
-| `PAUSED` | Evolution, unstuck, or Seed update accepted | `RUNNING` | Orchestration dispatches the revised route. |
+| `RUNNING` | `oracle_complete` | `COMPLETE` | 모든 evidence 통과 |
+| `RUNNING` | `oracle_incomplete` | `GAP_FILL` | 누락 증거만 좁혀 재실행 |
+| `RUNNING` | `oracle_blocked` | `BLOCKED` | 사용자/외부 권한 필요 |
+| `RUNNING` | `redteam_no_progress` | `PAUSED` | 반복 실패 또는 no-progress |
+| `RUNNING` | `heartbeat_timeout` | `ABORTED` | hard stop 후보 |
+| `RUNNING/GAP_FILL/RECOVERY` | `sut_hang_incomplete` | `REMEDIATING` | 외부 runner hang artifact 검출 |
+| `REMEDIATING` | `cleanup_evidence_valid` | `GAP_FILL` | cleanup/reset 증거 통과, time debt 정리 |
+| `REMEDIATING` | `cleanup_evidence_invalid` | `REMEDIATING` | deadline 전까지 remediation 유지 |
+| `REMEDIATING` | `cleanup_timeout` | `ABORTED` | 환경 제어력 상실 |
+| `GAP_FILL` | `missing_proof_acquired` | `RUNNING` | 누락 증거 확보 후 정상 실행 복귀 |
 
-`COMPLETE` and `ABORTED` are terminal. A terminal loop is never resumed. Its trace, receipts, and evidence remain durable.
+명시되지 않은 transition은 system-level exception으로 취급합니다.
 
-### Gap Fill
+## Completion Auditor Hang Gate
 
-When Oracle returns `INCOMPLETE`, it must include an `evidence_gap_report`, not a vague rejection. Orchestration uses that report to write a gap-fill dispatch directive:
+외부 runner가 아래처럼 self-contained artifact를 넘기면 SH가 감사합니다.
 
-```yaml
-mode: GAP_FILL
-seed_id: <same seed>
-active_slice: <missing proof only>
-missing_proof:
-  - criterion:
-    required_evidence:
-    allowed_actions:
-    forbidden_actions:
-oracle_recheck_required: true
+```json
+{
+  "kind": "sut_tick_hang",
+  "process_id": "proc_123",
+  "tick_id": "tick_45",
+  "started_at": "2026-06-13T18:10:00Z",
+  "observed_at": "2026-06-13T18:11:00Z",
+  "duration_ms": 60000,
+  "previous_artifact_hash": "sha256:...",
+  "current_artifact_hash": "sha256:...",
+  "retry_count": 0
+}
 ```
 
-Gap fill is not retry. The Seed remains fixed, and the Goal loop may only acquire the missing proof or report a blocker.
+검증:
 
-### Blocked Rehydration
-
-When Oracle returns `BLOCKED`, it must include a blocked receipt:
-
-```yaml
-blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci
-required_user_action: ""
-resume_check_id: ""
-last_safe_checkpoint_hash: ""
-open_evidence_gaps: []
-allowed_next_actions: []
-forbidden_next_actions: []
+```powershell
+py scripts\sh_runtime.py validate-completion-artifact --artifact evals\fixtures\evidence\sut_hang_timeout.json
 ```
 
-After user/external intervention, Orchestration does not ask an LLM whether resume is safe. It mechanically runs the allowlisted `resume_check_id`. If it fails, the run remains `BLOCKED`. If it passes, Orchestration compares the checkpoint hash domains and dispatches `RECOVERY`.
+판정:
 
-### Hash Domains
+- timeout이고 hash가 그대로면 `INCOMPLETE` + `REMEDIATING`
+- timeout이어도 hash가 바뀌었으면 `RUNNING`
+- cleanup/reset evidence가 유효하면 `GAP_FILL`
+- cleanup/reset evidence deadline이 지나면 `ABORTED`
 
-Use two separate hash domains:
+SH는 여기서도 process를 직접 kill하지 않습니다. 외부 runner가 cleanup/reset을 수행하고, SH는 그 evidence만 검수합니다.
 
-- `drift_hash` covers only the active-slice target file set: target source files/directories declared by the slice plus their Git diff/content hashes.
-- `evidence_hash` covers only Oracle evidence-map assets, such as `coverage/lcov.info` or `test-results.xml`, by content hash.
+## Security Boundary
 
-Always exclude the whole repository space outside the active-slice target set, `.sh/` harness state, and global temp directories from `drift_hash`. `.sh/evidence` may preserve copied evidence, but it belongs to `evidence_hash`, not workspace drift.
+기본 원칙:
 
-### Resume Check Security
+- resume command string을 실행하지 않는다.
+- `run-resume`은 real sandbox adapter가 없으면 fail-closed다.
+- user secret은 command string에 포매팅하지 않고 env-only로 주입해야 한다.
+- shell metacharacter가 있는 resume contract는 security incident로 거부한다.
+- filesystem/network/shell intent는 `security/policy.json`으로 검사한다.
 
-`resume_check` is not a shell command string. It is an allowlisted contract:
+정책 smoke:
 
-```yaml
-resume_check:
-  id: auth-smoke
-  argv: ["node.exe", "scripts/auth-smoke.js"]
-  shell: false
-  env_from_user: ["API_KEY"]
-  timeout_sec: 60
-  allowed_egress: ["api.example.com:443"]
-  declared_evidence_outputs: ["coverage/auth-smoke.json"]
-  writable_paths: ["<sandbox-tmp>", "coverage/auth-smoke.json"]
+```powershell
+py scripts\sh_runtime.py validate-policy --root . --policy security\policy.json --action-file security\fixtures\read_only_ok.json
+py scripts\sh_runtime.py validate-policy --root . --policy security\policy.json --action-file security\fixtures\dangerous_shell_needs_approval.json
 ```
 
-Security rules:
+## Repo 구성
 
-- No user input may be formatted into `argv`; secrets enter only through isolated subprocess environment variables.
-- The contract must be bound to the blocked receipt with `resume_check_contract_sha256`; an arbitrary well-formed JSON contract is not sufficient.
-- Shell metacharacters such as `;`, `&&`, `|`, `&`, backticks, `$(`, `%`, `^`, `!`, `>`, `<`, newline, or carriage return in the command contract cause the current run to enter `ABORTED` with a security incident receipt.
-- `.bat`, `.cmd`, `.ps1`, and known Windows script shims such as `npm`, `npx`, `pnpm`, and `yarn` are rejected until a sandbox adapter handles Windows command dispatch safely.
-- `shell` must be `false`.
-- The check must run in a least-privilege sandbox. If sandboxing cannot be provided, keep the run `BLOCKED`; do not fall back to unsafe execution.
-- Network is denied by default and enabled only through explicit per-check egress allowlists.
-- Write access is limited to `<sandbox-tmp>` and declared evidence outputs.
-
-## Goal Schema
-
-Every goal should be normalized before routing:
-
-```yaml
-objective: ""
-why: ""
-goal_hierarchy:
-  global_goal: ""
-  active_slice: ""
-  roadmap: []
-success_criteria: []
-constraints: []
-non_goals: []
-autonomy_level: high | medium | low
-decision_boundaries: []
-verification: []
-loop_type: clarify | research | build | debug | performance | cleanup | review
-ambiguity_score: 0.0-1.0
-seed_readiness: ready | needs_clarification | blocked
-stop_condition: ""
-```
-
-## Seed Contract
-
-A Seed is the stable execution contract derived from a Goal. The harness should not execute broad or ambiguous work directly from a conversational prompt.
-
-```yaml
-seed_id: ""
-goal_id: ""
-generation: 1
-objective: ""
-constraints: []
-acceptance_criteria: []
-non_goals: []
-ontology:
-  entities: []
-  relationships: []
-evaluation_plan:
-  mechanical: []
-  semantic: []
-  consensus_trigger: ""
-exit_conditions: []
-seed_hash: ""
-status: draft | accepted | superseded
-```
-
-Seed rules:
-
-- no broad execution before ambiguity is low enough to route safely
-- restate the goal before accepting a seed
-- every plan, checkpoint, and oracle receipt references a seed id or seed hash
-- evolve by creating a new seed generation, not by silently mutating the old one
-- active rules, fit profile, and seed defaults update only through promoted candidates
-
-## Active Slice
-
-Large goals must be staged. SH should keep the global objective visible while executing only the current slice.
-
-```yaml
-global_goal: ""
-active_slice:
-  id: ""
-  objective: ""
-  completion_signal: ""
-  boundaries: []
-roadmap:
-  - id: ""
-    status: planned | active | complete | blocked
-```
-
-Rules:
-
-- do not shrink the global goal to make the current slice look complete
-- do not claim roadmap items as active runtime capability
-- each active slice needs its own completion signal and evidence plan
-
-## Rule Memory
-
-The model should not reread every preference, rule, and prior lesson for every task. SH should select only the rules relevant to the active slice, loop type, and current evidence.
-
-Rule layers:
-
-- `control` - safe command/tool boundaries
-- `mode` - behavior for build, debug, review, research, cleanup, performance
-- `user-fit` - calibrated preferences and interaction defaults
-- `domain` - project-specific facts and constraints
-- `failure` - known anti-patterns and repeated mistakes
-- `promotion` - rules that were QA-gated into active memory
-
-## Trace And Promotion
-
-Learning from a run is not the same as mutating the harness.
+원격 저장소에 남기는 것은 설치와 실행에 필요한 파일 중심입니다.
 
 ```text
-execution trace
-  -> evaluator finding
-  -> improvement candidate
-  -> promotion gate
-  -> active rule / fit / seed default update
+agents/       역할 prompt
+commands/     Claude command entrypoint
+evals/        benchmark/regression fixtures
+schemas/      machine-readable contracts
+scripts/      installer와 runtime
+security/     permission policy와 fixtures
+skills/       SH workflow modules
+templates/    runtime/report templates
 ```
 
-Candidate rules:
+로컬 산출물이며 원격에 올리지 않는 것:
 
-- failures create candidates, not active rules
-- wins create reusable hints, not universal rules
-- every candidate references trace evidence
-- promotion requires oracle evidence and a regression/scope check
-- rejected candidates remain evidence; they are not deleted
+```text
+.sh/
+.omx/
+.claude/
+.codex/
+docs/
+*.html
+```
 
-## Parallel Hypotheses
+## 설계 기준
 
-Parallel workers should be treated as hypothesis runs, not as generic extra effort.
+SH 전체 설계 기준은 “모델을 경직시키지 않는 최소 하네스”입니다.
 
-Each run records:
+- strict schema는 runtime boundary와 evidence boundary에만 둔다.
+- 모델의 사고/탐색/구현 방식은 필요 이상으로 묶지 않는다.
+- state, trace, eval, permission, artifact처럼 실패 비용이 큰 지점만 기계적으로 강제한다.
+- prompt를 늘리는 대신 실행 substrate로 검증한다.
+- 하네스는 철길이고 LLM은 기관차다. 철길은 목적지와 탈선 방지만 책임지고, 기관차의 주행 능력을 불필요하게 죽이지 않는다.
 
-- hypothesis
-- active slice
-- seed id/hash
-- evidence
-- progress score
-- stuck signals and retry-exception evidence
-- fallback rate or uncertainty rate
-- recommendation: promote | keep-candidate | prune | rerun
+## 다음 개선 후보
 
-The leader owns promotion. Worker success cannot silently rewrite active memory.
-
-## Gap Closure
-
-A gap is acceptable only when it has a closure path.
-
-Each gap records:
-
-- current boundary
-- why the gap matters
-- closure path
-- evidence source
-- promotion or verification gate
-- owner/next action
-
-## Loop Types
-
-| Loop | Use When |
-| --- | --- |
-| `clarify` | Intent, scope, constraints, or success criteria are vague. |
-| `research` | External evidence, official docs, papers, or current facts determine correctness. |
-| `build` | A code/artifact deliverable can be implemented and tested. |
-| `debug` | The goal is failure reproduction, root cause, or regression isolation. |
-| `performance` | The goal has benchmark, latency, throughput, or memory criteria. |
-| `cleanup` | The goal is behavior-preserving simplification or AI-slop removal. |
-| `review` | The goal is critique, risk assessment, or verification only. |
-
-## Red Team Gate
-
-SH treats over-agreeable AI behavior as a real failure mode. The `red-team` agent challenges:
-
-- sycophancy: agreeing with the user instead of testing the claim
-- optimism bias: assuming easy success without evidence
-- hidden assumptions
-- missing non-goals
-- weak tests or unverifiable completion criteria
-- scope drift
-- unsafe or irreversible execution paths
-- seed drift or unreviewed seed mutation
-
-Verdicts:
-
-- `PASS` - no blocking issue
-- `WARN` - proceed with explicit residual risk
-- `BLOCK` - do not execute or complete until resolved
-
-## Oracle Gate
-
-The oracle is staged to avoid expensive or speculative review when cheap checks already fail:
-
-1. Mechanical verification: lint, typecheck, build, tests, static checks, artifact existence.
-2. Semantic verification: acceptance criteria mapping, goal alignment, non-goal respect, drift score.
-3. Consensus verification: optional critic/multi-agent review only when uncertainty, risk, or user request justifies it.
-
-The oracle records:
-
-- `goal_drift`
-- `constraint_drift`
-- `ontology_drift`
-- `evidence_gap`
-- final verdict: `COMPLETE`, `INCOMPLETE`, or `BLOCKED`
-
-Verdict handling:
-
-- `COMPLETE` closes the loop.
-- `INCOMPLETE` is not a state; it must include an evidence gap report and usually dispatch `GAP_FILL`.
-- External-runner hang artifacts are `INCOMPLETE` verdicts that dispatch `REMEDIATING` until cleanup/reset evidence is validated.
-- `BLOCKED` parks the loop and requires secure rehydration before `RECOVERY`.
-
-## Evolution And Unstuck
-
-When oracle verification fails without a hard external blocker, the harness should decide whether to:
-
-- enter `GAP_FILL` when the Seed is valid and only proof is missing
-- evolve into a new seed generation
-- run `unstuck` lateral review before changing approach
-- reroute to clarification when the original goal was wrong or underspecified
-
-Stagnation signals:
-
-- repeated failed verification with the same root cause
-- oscillating approach changes
-- no drift reduction after multiple checkpoints
-- red-team repeatedly finding the same assumption gap
-- no-progress trigger after 3 repeated failures, unsupported claims, or plan-only churn
-
-Do not use retry as the default response to stagnation. Route through red-team and then narrow, evolve, unstuck, or abort unless the retry exception rule is satisfied.
-
-## Relationship To Existing Harnesses
-
-Ideas adopted from Gajae-Code:
-
-- small public workflow surface
-- goal ledger as the durable runtime object
-- read-only planner/architect/critic lanes
-- tmux/team execution only when parallelism materially helps
-- fail-closed mindset for remote control surfaces
-
-Ideas adopted from LazyCodex / OmO:
-
-- one-line install UX
-- three-command mental model
-- verified completion loops
-- hierarchical project memory
-- evidence gates before completion
-
-Ideas adopted from Ouroboros:
-
-- Seed as an immutable execution contract
-- ambiguity scoring before execution
-- restate gate before locking a seed
-- mechanical -> semantic -> consensus oracle stages
-- drift measurement across goal, constraints, and ontology
-- evolution loop for repeated improvement
-- unstuck/lateral personas for stagnation
-
-SH intentionally does not copy Ouroboros's full Agent OS/kernel shape. The useful subset is the loop contract, not the whole runtime.
-
-Ideas adopted from Pocketmon-Harness:
-
-- global goal plus active executable slice
-- rule memory read instead of giant prompts
-- deterministic/mechanical authority before LLM fallback
-- trace-backed improvement candidates
-- QA-gated promotion before active memory changes
-- parallel workers as hypothesis experiments
-- gap closure records instead of fake completion
-
-SH intentionally does not copy the Pokemon/mGBA runtime. The useful subset is the learning and promotion discipline.
-
-## Files
-
-| Path | Purpose |
-| --- | --- |
-| `scripts/sh_runtime.py` | Stable CLI entrypoint and command-handler surface for the deterministic runtime substrate. |
-| `scripts/sh_runtime_core.py` | Shared runtime invariants and helpers for state transitions, JSON IO, schema subset validation, path checks, and hashing. |
-| `scripts/README.md` | Runtime command reference and exit-code semantics. |
-| `schemas/` | Machine-readable contracts for tool contracts, failure taxonomy, trace events, eval tasks, run manifests, and security policy. |
-| `evals/` | Completion-auditor benchmark suite, regression suite, fixtures, and resource spec. |
-| `security/` | Permission profiles, network/write policy, approval fixtures, and negative policy probes. |
-| `docs/domain/completion-auditor/` | First vertical: glossary, evaluator rubric, failure corpus, and demo run. |
-| `docs/scorecards/` | Current scorecard and UltraQA hardening report. |
-| `docs/exec-plans/` | Living implementation plan with progress, surprises, decisions, and validation evidence. |
-| `docs/SIGNATURE_HARNESS_IMPLEMENTATION_REVIEW.md` | Earlier implementation/design review covering what was built, why it was built that way, and what remains out of scope. |
-| `skills/` | Portable skill core. |
-| `agents/` | Claude Code role prompts and conceptual role surfaces. |
-| `commands/sh.md` | Claude Code slash command entrypoint. |
-| `templates/` | Durable goal, workflow evidence, red-team, oracle, ledger, seed, evolution, candidate, promotion, and gap templates. |
-| `AGENTS.md` | Codex adapter and repo-local operating contract. |
-
-## Next Build Steps
-
-1. Add a sandbox adapter for `run-resume` so allowlisted resume checks can execute without violating the security contract.
-2. Add tests/gates that reject stale fixed-pipeline language and enforce the public surface contract.
-3. Start the user-fit calibration pass: tune ambiguity thresholds, default loop depth, red-team strictness, and report shape to this user's actual working style.
-4. Add candidate-only fit updates so the harness learns from actual sessions without silently rewriting the user's preferences.
+- real sandbox adapter for `run-resume`
+- host-level Claude/Codex E2E trace proof
+- 실제 사용자 run corpus 축적
+- signed/attested external runner artifacts
+- Linux installer smoke

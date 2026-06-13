@@ -24,3 +24,7 @@ Thumbs.db
 *.log
 tmp/
 temp/
+
+# Local review/showcase artifacts; keep the remote repo install-focused
+docs/
+*.html
