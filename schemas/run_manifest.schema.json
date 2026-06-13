@@ -13,7 +13,7 @@
     "objective": {"type": "string"},
     "vertical": {"type": "string"},
     "permission_profile": {"enum": ["read_only", "workspace_write", "scoped_network", "danger_full_access"]},
-    "status": {"enum": ["RUNNING", "GAP_FILL", "RECOVERY", "PAUSED", "BLOCKED", "COMPLETE", "ABORTED"]},
+    "status": {"enum": ["RUNNING", "GAP_FILL", "RECOVERY", "REMEDIATING", "PAUSED", "BLOCKED", "COMPLETE", "ABORTED"]},
     "created_at": {"type": "string"},
     "updated_at": {"type": "string"},
     "agent_name": {"type": "string"},

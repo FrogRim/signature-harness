@@ -7,7 +7,7 @@ description: Internal Signature Harness completion-gate module. Invoked by goal-
 
 The oracle decides whether completion is proven. It runs cheap mechanical checks first, semantic alignment second, and consensus only when uncertainty or risk justifies the cost.
 
-`INCOMPLETE` is a verdict, not a runtime state. When completion is not proven, the oracle must return a precise missing-proof report so orchestration can create a `GAP_FILL` execution slice instead of allowing ordinary retry.
+`INCOMPLETE` is a verdict, not a runtime state. When completion is not proven, the oracle must return a precise missing-proof report so orchestration can create a `GAP_FILL` execution slice instead of allowing ordinary retry. External-runner hang artifacts are routed through `REMEDIATING` before `GAP_FILL`.
 
 ## Inputs
 
@@ -24,6 +24,7 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 - improvement candidates or promotion decisions
 - active-slice target manifest and evidence asset manifest
 - dynamic workflow evidence contract when fan-out, tournament, adversarial verification, generate/filter, classify/act, or loop-until-done was used
+- completion auditor artifact when an external runner reports SUT/tick hang or cleanup/reset evidence
 
 ## Method
 
@@ -36,7 +37,8 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 7. Confirm non-goals and scope boundaries were respected.
 8. Confirm any active memory update passed `promotion-gate`.
 9. If a dynamic workflow was used, validate its evidence contract with `scripts/sh_runtime.py validate-workflow-evidence`.
-10. Return one verdict with its required control-plane payload:
+10. If an external runner reports a SUT/tick hang or remediation evidence, validate it with `scripts/sh_runtime.py validate-completion-artifact`.
+11. Return one verdict with its required control-plane payload:
    - `COMPLETE` - evidence proves the goal.
    - `INCOMPLETE` - evidence is missing or mismatched; include `evidence_gap_report`.
    - `BLOCKED` - progress needs user input, authority, credentials, or an external state change; include `blocked_receipt`.
@@ -91,6 +93,20 @@ Exit codes:
 - `2` - invalid evidence contract schema
 - `5` - schema valid but incomplete; dispatch `GAP_FILL`
 
+## Completion Auditor Artifacts
+
+SH does not execute, kill, or clean up SUT/tick processes. It audits artifacts
+from an external runner:
+
+```powershell
+py scripts/sh_runtime.py validate-completion-artifact --artifact <path>
+```
+
+- `sut_tick_hang` exit `5`: return `INCOMPLETE` and recommend `REMEDIATING`.
+- `remediation_evidence` exit `0`: recommend `GAP_FILL`.
+- `remediation_evidence` exit `5`: stay `REMEDIATING`.
+- `remediation_evidence` exit `6`: recommend `ABORTED`.
+
 ## Hash Domains
 
 When checking recovery or evidence stability, keep hash domains separate:
@@ -139,7 +155,7 @@ Seed: <seed id/hash or none with reason>
   allowed_gap_fill_actions:
   forbidden_actions:
   keep_seed: yes | no
-  recommended_next_state: GAP_FILL | PAUSED
+  recommended_next_state: GAP_FILL | REMEDIATING | PAUSED
 
 ## Blocked Receipt
 - blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci | none

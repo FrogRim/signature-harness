@@ -27,6 +27,7 @@ py scripts/sh_runtime.py validate-resume --contract .sh/resume-checks/auth-smoke
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
+py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/sut_hang_timeout.json
 py scripts/sh_runtime.py write-directive --run-id run_1 --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
 py scripts/sh_runtime.py verify-ledger --root .
@@ -61,6 +62,16 @@ explicitly permit descriptive strings. Add
 `--evidence-manifest <path>` to require those files to appear in a prior
 `hash-manifest` output's `evidence_assets` with matching `sha256` and `size`.
 
+`validate-completion-artifact` checks Completion Auditor artifacts emitted by an
+external runner. It does not execute, kill, or clean up the SUT. `sut_tick_hang`
+artifacts use `observed_at - started_at >= duration_ms` plus unchanged
+previous/current hashes to recommend `INCOMPLETE` and `REMEDIATING`.
+`remediation_evidence` artifacts gate cleanup/reset proof: valid evidence returns
+`GAP_FILL`, invalid-but-open evidence stays `REMEDIATING`, and expired evidence
+recommends `ABORTED`. Exit code `0` means the artifact is valid with no
+fail-closed gate, `2` means invalid schema, `5` means incomplete/remediation
+handling is required, and `6` means remediation timeout.
+
 The durable runner commands create ignored runtime artifacts under
 `.sh/runs/<run_id>/`: `run_manifest.json`, `state.json`,
 `step_ledger.jsonl`, `interruptions.json`, `handoff.md`, `replay.json`,
@@ -73,6 +84,8 @@ If `record-step` changes state, pass `--event <state-machine-event>`; the event 
 `.sh/evals/<eval_run_id>/transcript_review.md`, and returns exit code `8`
 when any trial fails.
 Eval tasks must reference existing `expected_artifacts`; selected fixtures can also invoke the workflow evidence validator, resume contract validator, or policy validator as part of grading.
+Eval tasks may also invoke the Completion Auditor artifact validator with
+`fixture.validator.type: completion_artifact`.
 
 `append-ledger` writes `prev_hash` and `entry_hash`; callers may not provide
 chain-reserved keys. `verify-ledger` checks the full hash chain and exits `6`

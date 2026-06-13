@@ -11,9 +11,9 @@
 continue | close | pause | gap-fill | narrow-active-slice | blocked | recovery | red-team | evolution-loop | unstuck | abort | retry-once
 
 ## State Transition
-- from_state: RUNNING | GAP_FILL | RECOVERY | PAUSED | BLOCKED
+- from_state: RUNNING | GAP_FILL | RECOVERY | REMEDIATING | PAUSED | BLOCKED
 - trigger_event:
-- to_state: RUNNING | GAP_FILL | RECOVERY | PAUSED | BLOCKED | COMPLETE | ABORTED
+- to_state: RUNNING | GAP_FILL | RECOVERY | REMEDIATING | PAUSED | BLOCKED | COMPLETE | ABORTED
 - listed_transition: yes | no
 
 ## Watchdog

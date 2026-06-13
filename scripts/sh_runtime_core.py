@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
-EXECUTION_STATES = {"RUNNING", "GAP_FILL", "RECOVERY"}
+EXECUTION_STATES = {"RUNNING", "GAP_FILL", "RECOVERY", "REMEDIATING"}
 SUSPENDED_STATES = {"PAUSED", "BLOCKED"}
 TERMINAL_STATES = {"COMPLETE", "ABORTED"}
 ALL_STATES = EXECUTION_STATES | SUSPENDED_STATES | TERMINAL_STATES
@@ -30,6 +30,7 @@ TRANSITIONS: Dict[Tuple[str, str], str] = {
     ("RUNNING", "heartbeat_timeout"): "ABORTED",
     ("RUNNING", "critical_risk"): "ABORTED",
     ("RUNNING", "security_violation"): "ABORTED",
+    ("RUNNING", "sut_hang_incomplete"): "REMEDIATING",
     ("GAP_FILL", "missing_proof_acquired"): "RUNNING",
     ("GAP_FILL", "proof_still_missing"): "GAP_FILL",
     ("GAP_FILL", "proof_still_missing_3x"): "PAUSED",
@@ -37,6 +38,7 @@ TRANSITIONS: Dict[Tuple[str, str], str] = {
     ("GAP_FILL", "heartbeat_timeout"): "ABORTED",
     ("GAP_FILL", "critical_risk"): "ABORTED",
     ("GAP_FILL", "security_violation"): "ABORTED",
+    ("GAP_FILL", "sut_hang_incomplete"): "REMEDIATING",
     ("BLOCKED", "rehydration_pass"): "RECOVERY",
     ("BLOCKED", "rehydration_fail"): "BLOCKED",
     ("RECOVERY", "recovery_validated"): "RUNNING",
@@ -45,6 +47,13 @@ TRANSITIONS: Dict[Tuple[str, str], str] = {
     ("RECOVERY", "heartbeat_timeout"): "ABORTED",
     ("RECOVERY", "critical_risk"): "ABORTED",
     ("RECOVERY", "security_violation"): "ABORTED",
+    ("RECOVERY", "sut_hang_incomplete"): "REMEDIATING",
+    ("REMEDIATING", "cleanup_evidence_valid"): "GAP_FILL",
+    ("REMEDIATING", "cleanup_evidence_invalid"): "REMEDIATING",
+    ("REMEDIATING", "cleanup_timeout"): "ABORTED",
+    ("REMEDIATING", "heartbeat_timeout"): "ABORTED",
+    ("REMEDIATING", "critical_risk"): "ABORTED",
+    ("REMEDIATING", "security_violation"): "ABORTED",
     ("PAUSED", "evolution_accepted"): "RUNNING",
     ("PAUSED", "unstuck_accepted"): "RUNNING",
     ("PAUSED", "seed_update_accepted"): "RUNNING",
@@ -61,9 +70,13 @@ EVENT_ACTION = {
     "heartbeat_timeout": "abort",
     "critical_risk": "abort",
     "security_violation": "abort",
+    "sut_hang_incomplete": "remediate",
     "missing_proof_acquired": "continue",
     "proof_still_missing": "gap-fill",
     "proof_still_missing_3x": "pause",
+    "cleanup_evidence_valid": "gap-fill",
+    "cleanup_evidence_invalid": "remediate",
+    "cleanup_timeout": "abort",
     "abort_requested": "abort",
     "rehydration_pass": "recovery",
     "rehydration_fail": "blocked",
@@ -100,6 +113,7 @@ LEDGER_EVENT_TYPES = {
     "blocked",
     "aborted",
     "complete",
+    "remediation",
 }
 
 DEFAULT_DRIFT_EXCLUDE_NAMES = {
@@ -188,6 +202,8 @@ FAILURE_CODES = {
     "CONTRACT_VIOLATION",
     "ARTIFACT_MISMATCH",
     "BENCHMARK_INFRA_FAILURE",
+    "SUT_HANG_TIMEOUT",
+    "REMEDIATION_TIMEOUT",
 }
 EXPECTED_SCHEMA_FILES = {
     "tool_contracts.schema.json",
@@ -198,6 +214,7 @@ EXPECTED_SCHEMA_FILES = {
     "trace_event.schema.json",
     "eval_task.schema.json",
     "security_policy.schema.json",
+    "completion_artifact.schema.json",
 }
 EXPECTED_TOOL_CONTRACTS = {
     "init-state",
@@ -216,6 +233,7 @@ EXPECTED_TOOL_CONTRACTS = {
     "replay-run",
     "validate-schemas",
     "validate-policy",
+    "validate-completion-artifact",
     "run-evals",
     "self-test",
 }

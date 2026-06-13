@@ -76,6 +76,7 @@ Choose the smallest loop that can succeed:
 11. Execute in bounded steps. Before each non-trivial tick, read any runtime directive at `.sh/orchestration/directives/<run_id>.json`.
     - In `GAP_FILL`, do only the missing-proof work listed by orchestration.
     - In `RECOVERY`, do only the recovery slice until Oracle recheck restores normal authority.
+    - In `REMEDIATING`, do not execute SUT cleanup; wait for external-runner remediation evidence or the fail-safe abort directive.
 12. Capture trace-backed evidence and heartbeat/checkpoint state.
 13. Run `red-team` on completion claims when the work is non-trivial.
 14. Run staged `oracle-verification`.
@@ -120,10 +121,11 @@ Goal loops do not decide terminal success. Oracle verdicts and orchestration sta
 
 - `COMPLETE` closes the loop and forbids more execution.
 - `INCOMPLETE` is not a state; orchestration converts it to `GAP_FILL`.
+- External-runner hang artifacts convert the SUT verdict to `INCOMPLETE` and the SH run to `REMEDIATING` until cleanup/reset evidence is validated.
 - `BLOCKED` parks the loop until rehydration passes.
 - `ABORTED` is terminal and must not be resumed.
 
-If a directive says `close`, `pause`, `blocked`, `gap-fill`, `recovery`, or `abort`, obey that directive before any further implementation.
+If a directive says `close`, `pause`, `blocked`, `gap-fill`, `recovery`, `remediate`, or `abort`, obey that directive before any further implementation.
 
 ## State
 

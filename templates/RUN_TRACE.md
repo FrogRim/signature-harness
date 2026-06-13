@@ -7,7 +7,7 @@
 - started_at:
 - ended_at:
 - mode: fresh | gap-fill | recovery | replay | exploratory
-- status: RUNNING | GAP_FILL | RECOVERY | PAUSED | BLOCKED | COMPLETE | ABORTED
+- status: RUNNING | GAP_FILL | RECOVERY | REMEDIATING | PAUSED | BLOCKED | COMPLETE | ABORTED
 - iteration:
 
 ## Heartbeat
@@ -36,7 +36,7 @@
 - evidence_gap:
 
 ## Routing
-- directive: continue | close | pause | gap-fill | narrow-active-slice | blocked | recovery | evolution-loop | unstuck | abort | retry-once
+- directive: continue | close | pause | gap-fill | narrow-active-slice | blocked | recovery | remediate | evolution-loop | unstuck | abort | retry-once
 - retry_exception_approved: yes | no
 - retry_exception_basis:
 
@@ -47,4 +47,4 @@
 - evidence_hash_assets:
 
 ## Outcome
-complete | gap-fill | recovery | paused | blocked | aborted | candidate-created | promoted | pruned
+complete | gap-fill | remediation | recovery | paused | blocked | aborted | candidate-created | promoted | pruned

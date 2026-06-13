@@ -11,11 +11,11 @@ The orchestration loop watches goal loops, decides the next route, and records w
 
 Runtime states:
 
-- execution: `RUNNING`, `GAP_FILL`, `RECOVERY`
+- execution: `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING`
 - suspended: `PAUSED`, `BLOCKED`
 - terminal: `COMPLETE`, `ABORTED`
 
-`INCOMPLETE` is an Oracle verdict, not a runtime state. Any unlisted state transition is a system-level exception.
+`INCOMPLETE` is an Oracle verdict, not a runtime state. Ordinary missing proof dispatches `GAP_FILL`; an external-runner hang artifact dispatches `REMEDIATING` first. Any unlisted state transition is a system-level exception.
 
 ## Inputs
 
@@ -80,6 +80,7 @@ State transitions:
 | --- | --- | --- | --- |
 | `RUNNING` | Oracle `COMPLETE` | `COMPLETE` | write `close` directive and freeze loop |
 | `RUNNING` | Oracle `INCOMPLETE` | `GAP_FILL` | keep Seed, narrow active slice to missing proof, dispatch gap-fill |
+| `RUNNING`, `GAP_FILL`, `RECOVERY` | external-runner hang artifact proves timeout plus no-progress | `REMEDIATING` | write remediation directive for the external runner; do not execute cleanup in SH |
 | `RUNNING` | Oracle `BLOCKED` | `BLOCKED` | dump blocked receipt and park process |
 | `RUNNING` | no-progress 3-strikes | `PAUSED` | pause and route through red-team/evolution/unstuck |
 | `RUNNING` | missed heartbeat plus timeout or critical risk | `ABORTED` | hard-stop run and preserve evidence |
@@ -93,6 +94,10 @@ State transitions:
 | `RECOVERY` | Oracle `BLOCKED` | `BLOCKED` | park recovery and write a fresh blocked receipt |
 | `RECOVERY` | drift detected | `PAUSED` | route to evolution, unstuck, or clarification |
 | `RECOVERY` | missed heartbeat plus timeout, critical risk, or security violation | `ABORTED` | hard-stop recovery and preserve evidence |
+| `REMEDIATING` | cleanup/reset evidence valid | `GAP_FILL` | reconcile time debt and missing proof before normal execution resumes |
+| `REMEDIATING` | cleanup/reset evidence invalid but deadline open | `REMEDIATING` | keep external runner on remediation evidence |
+| `REMEDIATING` | cleanup/reset deadline expired | `ABORTED` | environment control is lost; abort run |
+| `REMEDIATING` | missed heartbeat plus timeout, critical risk, or security violation | `ABORTED` | hard-stop remediation and preserve evidence |
 | `PAUSED` | evolution, unstuck, or Seed update accepted | `RUNNING` | dispatch revised route |
 | `PAUSED` | abort requested, critical risk, or security violation | `ABORTED` | permanently discard loop and preserve evidence |
 
@@ -146,6 +151,18 @@ existing evidence files instead of descriptive evidence strings.
 When `completion_allowed` is false or the command exits `5`, dispatch `GAP_FILL`
 for the listed `incomplete_record_ids`. Exit `2` is an invalid evidence contract.
 Do not let the goal loop repeat the whole workflow.
+
+For Completion Auditor external-runner hang artifacts, validate the artifact
+instead of executing the SUT:
+
+```powershell
+py scripts/sh_runtime.py validate-completion-artifact --artifact <path>
+```
+
+If `sut_tick_hang` exits `5`, dispatch `REMEDIATING` with
+`action: remediate` and `required_next_owner: external-runner`. If
+`remediation_evidence` is valid, dispatch `GAP_FILL`; if the remediation
+deadline expires, dispatch `ABORTED`.
 
 ## Gap Fill
 

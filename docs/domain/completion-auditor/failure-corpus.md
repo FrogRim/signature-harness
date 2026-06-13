@@ -18,5 +18,9 @@ The deterministic benchmark suite in `evals/benchmark_tasks.jsonl` covers the fo
 | Budget and missing context | `bench_014`, `bench_015` | `OVER_BUDGET`, `MISSING_CONTEXT` |
 | Wrong tool and human blocker | `bench_016`, `bench_017` | `WRONG_TOOL`, `NEEDS_HUMAN_DECISION` |
 | Positive artifact-backed completion | `bench_020` | none |
+| External-runner SUT hang | `bench_021` | `SUT_HANG_TIMEOUT` |
+| Progressing external-runner tick | `bench_022` | none |
+| Remediation timeout fail-safe | `bench_023` | `REMEDIATION_TIMEOUT` |
+| Valid remediation evidence | `reg_005` | none |
 
 Fixture files live under `evals/fixtures/evidence/` and `security/fixtures/`. These fixtures are intentionally small; their role is to make the audit failure mode explicit and replayable, not to simulate a full host agent.

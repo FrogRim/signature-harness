@@ -9,6 +9,9 @@ Primary vertical: AI coding-agent completion auditor.
 - **Stale evidence**: An artifact whose current content differs from the hash recorded in the evidence manifest.
 - **Oracle verdict**: Mechanical or staged judgment of completion. `INCOMPLETE` is a verdict, not a runtime state.
 - **GAP_FILL**: Narrow execution state for collecting missing proof only.
+- **REMEDIATING**: Core runtime state for external-runner cleanup/reset evidence after a SUT/tick hang. SH audits evidence; it does not execute cleanup.
+- **SUT tick hang artifact**: Self-contained external-runner artifact with process/tick identity, deterministic timing, previous/current hashes, and retry count.
+- **Remediation evidence**: External-runner artifact proving cleanup/reset before a remediation deadline.
 - **Replay**: Reconstruction of a run from `.sh/runs/<run_id>/replay.json`, `trace.jsonl`, and related artifacts.
 - **Permission profile**: Repo-local policy level: `read_only`, `workspace_write`, `scoped_network`, or `danger_full_access`.
 - **Approval lifecycle**: Recorded request, reviewer, result, timestamp, and reason for a policy-gated action.

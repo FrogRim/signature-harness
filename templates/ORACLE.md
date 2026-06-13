@@ -34,7 +34,7 @@ Seed: <seed id/hash or none with reason>
   allowed_gap_fill_actions:
   forbidden_actions:
   keep_seed: yes | no
-  recommended_next_state: GAP_FILL | PAUSED
+  recommended_next_state: GAP_FILL | REMEDIATING | PAUSED
 
 ## Blocked Receipt
 - blocker_kind: credential_missing | user_decision | permission_required | external_service | destructive_authority | waiting_ci | none

@@ -17,13 +17,13 @@
 ## Verdict
 COMPLETE | INCOMPLETE | BLOCKED
 
-`INCOMPLETE` is a verdict, not a state. It must produce `Evidence Gap Report` and route to `GAP_FILL` when the Seed remains valid.
+`INCOMPLETE` is a verdict, not a state. It must produce `Evidence Gap Report` and route to `GAP_FILL` when the Seed remains valid. External-runner hang artifacts route through `REMEDIATING` before `GAP_FILL`.
 
 ## Evidence Gap Report
 - gap_id:
 - missing_proof:
 - required_evidence:
-- recommended_next_state: GAP_FILL | PAUSED
+- recommended_next_state: GAP_FILL | REMEDIATING | PAUSED
 
 ## Blocked Receipt
 - blocker_kind:

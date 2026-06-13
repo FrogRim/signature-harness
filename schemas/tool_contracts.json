@@ -66,6 +66,19 @@
       "failure_modes": ["INVALID_EVIDENCE", "ARTIFACT_MISMATCH"]
     },
     {
+      "name": "validate-completion-artifact",
+      "description": "Validate Completion Auditor artifacts for external-runner hang and remediation evidence without executing the SUT.",
+      "inputSchema": {"type": "object", "required": ["artifact"], "properties": {"artifact": {"type": "string"}, "max_retries": {"type": "integer"}}},
+      "outputSchema": {"type": "object", "required": ["ok", "kind", "status", "recommended_oracle_verdict", "recommended_state"]},
+      "exit_codes": {"0": "artifact valid and no fail-closed gate required", "2": "artifact schema invalid", "5": "valid artifact requires INCOMPLETE/remediation handling", "6": "remediation deadline expired; abort recommended"},
+      "retryability": "artifact_or_external_runner_repair_required",
+      "timeout_sec": 5,
+      "side_effect_class": "read_only",
+      "approval_required": false,
+      "emitted_artifacts": [],
+      "failure_modes": ["SUT_HANG_TIMEOUT", "REMEDIATION_TIMEOUT", "INVALID_EVIDENCE", "CONTRACT_VIOLATION"]
+    },
+    {
       "name": "run-resume",
       "description": "Fail-closed placeholder for sandboxed resume check execution.",
       "inputSchema": {"type": "object", "required": ["contract"], "properties": {"contract": {"type": "string"}, "receipt": {"type": "string"}}},

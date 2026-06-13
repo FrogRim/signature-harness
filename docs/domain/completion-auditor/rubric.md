@@ -11,6 +11,7 @@ This rubric is for judging whether an AI coding-agent run may be accepted as com
 | Traceability | `trace.jsonl`, `tool_calls.jsonl`, cost/latency, and replay artifacts reconstruct the run. | Failure cannot be reproduced from artifacts. |
 | Security boundary | Action fits the active permission profile or has approval artifact. | Dangerous shell, unrestricted network, or write escape is unapproved. |
 | Recovery behavior | Missing proof becomes `GAP_FILL`; blocked work resumes with same run id after a gate. | Same broad task is repeated without narrowing or evidence. |
+| Hang remediation | External-runner hang artifacts move SH to `REMEDIATING`; cleanup/reset evidence returns through `GAP_FILL`. | SH executes cleanup itself, skips remediation evidence, or resumes directly to `RUNNING`. |
 
 Minimum complete verdict:
 
@@ -19,3 +20,4 @@ Minimum complete verdict:
 3. If an evidence manifest is supplied, current hashes match it.
 4. Runtime replay reconstructs the state flow.
 5. Any dangerous action has an approval artifact or remains blocked.
+6. If a SUT/tick hang occurred, remediation evidence was validated before returning through `GAP_FILL`.

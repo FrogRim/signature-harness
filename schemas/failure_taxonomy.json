@@ -152,6 +152,24 @@
       "owner": "eval-harness",
       "evidence_required": ["eval_infra_finding"],
       "user_visible_message": "The benchmark infrastructure failed before judging model behavior."
+    },
+    {
+      "code": "SUT_HANG_TIMEOUT",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "enter_remediation_gate",
+      "owner": "completion-auditor",
+      "evidence_required": ["sut_tick_hang_artifact"],
+      "user_visible_message": "The external runner reported a timed-out SUT tick with no progress; cleanup/reset evidence is required."
+    },
+    {
+      "code": "REMEDIATION_TIMEOUT",
+      "severity": "critical",
+      "retriable": false,
+      "recovery_action": "abort_environment_control_lost",
+      "owner": "completion-auditor",
+      "evidence_required": ["remediation_evidence_deadline"],
+      "user_visible_message": "Cleanup/reset evidence did not arrive before the remediation deadline; the harness must abort the run."
     }
   ]
 }

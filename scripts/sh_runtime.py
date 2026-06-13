@@ -81,6 +81,11 @@ def emit(payload: Dict[str, Any], code: int = 0) -> int:
     return code
 
 
+SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+REMEDIATION_CLEANUP_STATUSES = {"cleanup_complete", "reset_complete"}
+REMEDIATION_RESOURCE_CLEAR_STATUSES = {"clear", "none_remaining"}
+
+
 def cmd_validate_transition(args: argparse.Namespace) -> int:
     payload = transition_result(args.from_state, args.event, args.to_state)
     if not payload["ok"]:
@@ -750,6 +755,209 @@ def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
     return emit(result)
 
 
+def parse_utc_timestamp(value: Any, label: str, findings: List[Dict[str, str]]) -> Optional[_dt.datetime]:
+    if not isinstance(value, str) or not value.strip():
+        findings.append({"code": f"missing_{label}", "detail": f"{label} must be an ISO-8601 UTC timestamp"})
+        return None
+    try:
+        parsed = _dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        findings.append({"code": f"invalid_{label}", "detail": f"{label} must be an ISO-8601 timestamp"})
+        return None
+    if parsed.tzinfo is None:
+        findings.append({"code": f"invalid_{label}", "detail": f"{label} must include a timezone"})
+        return None
+    return parsed.astimezone(_dt.timezone.utc)
+
+
+def require_safe_artifact_id(artifact: Dict[str, Any], key: str, findings: List[Dict[str, str]]) -> Optional[str]:
+    value = artifact.get(key)
+    if not isinstance(value, str) or not SAFE_ID_RE.match(value):
+        findings.append({"code": f"invalid_{key}", "detail": f"{key} must be a safe non-empty identifier"})
+        return None
+    return value
+
+
+def require_sha256(artifact: Dict[str, Any], key: str, findings: List[Dict[str, str]]) -> Optional[str]:
+    value = artifact.get(key)
+    if not isinstance(value, str) or not SHA256_RE.match(value):
+        findings.append({"code": f"invalid_{key}", "detail": f"{key} must match sha256:<64 lowercase hex chars>"})
+        return None
+    return value
+
+
+def validate_sut_tick_hang_artifact(artifact: Dict[str, Any], *, max_retries: int) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    process_id = require_safe_artifact_id(artifact, "process_id", findings)
+    tick_id = require_safe_artifact_id(artifact, "tick_id", findings)
+    started_at = parse_utc_timestamp(artifact.get("started_at"), "started_at", findings)
+    observed_at = parse_utc_timestamp(artifact.get("observed_at"), "observed_at", findings)
+    duration_ms = artifact.get("duration_ms")
+    if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms <= 0:
+        findings.append({"code": "invalid_duration_ms", "detail": "duration_ms must be a positive integer"})
+        duration_ms = None
+    previous_hash = require_sha256(artifact, "previous_artifact_hash", findings)
+    current_hash = require_sha256(artifact, "current_artifact_hash", findings)
+    retry_count = artifact.get("retry_count")
+    if not isinstance(retry_count, int) or isinstance(retry_count, bool) or retry_count < 0:
+        findings.append({"code": "invalid_retry_count", "detail": "retry_count must be a non-negative integer"})
+        retry_count = None
+
+    elapsed_ms: Optional[int] = None
+    timed_out = False
+    if started_at is not None and observed_at is not None and duration_ms is not None:
+        elapsed_ms = int((observed_at - started_at).total_seconds() * 1000)
+        if elapsed_ms < 0:
+            findings.append({"code": "invalid_time_order", "detail": "observed_at must be at or after started_at"})
+        else:
+            timed_out = elapsed_ms >= duration_ms
+
+    no_progress = previous_hash is not None and current_hash is not None and previous_hash == current_hash
+    retry_limit_exceeded = retry_count is not None and retry_count > max_retries
+    schema_ok = not findings
+    hang_detected = schema_ok and timed_out and no_progress
+    status = "invalid_schema"
+    recommended_verdict = "CONTINUE"
+    recommended_state = "RUNNING"
+    recommended_event = None
+    failure_code = None
+    blockers: List[Dict[str, str]] = []
+    if schema_ok:
+        if hang_detected:
+            status = "retry_limit_exceeded" if retry_limit_exceeded else "hang_detected"
+            recommended_verdict = "INCOMPLETE"
+            recommended_state = "REMEDIATING"
+            recommended_event = "sut_hang_incomplete"
+            failure_code = "SUT_HANG_TIMEOUT"
+            if retry_limit_exceeded:
+                blockers.append({"code": "retry_limit_exceeded", "detail": f"retry_count {retry_count} exceeds max_retries {max_retries}"})
+        elif not timed_out:
+            status = "not_timed_out"
+        else:
+            status = "progressing"
+    return {
+        "ok": schema_ok,
+        "kind": "sut_tick_hang",
+        "status": status,
+        "process_id": process_id,
+        "tick_id": tick_id,
+        "elapsed_ms": elapsed_ms,
+        "duration_ms": duration_ms,
+        "timed_out": timed_out,
+        "no_progress": no_progress,
+        "retry_count": retry_count,
+        "max_retries": max_retries,
+        "recommended_oracle_verdict": recommended_verdict,
+        "recommended_state": recommended_state,
+        "recommended_event": recommended_event,
+        "failure_code": failure_code,
+        "schema_findings": findings,
+        "completion_blockers": blockers,
+    }
+
+
+def validate_remediation_evidence_artifact(artifact: Dict[str, Any]) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    blockers: List[Dict[str, str]] = []
+    process_id = require_safe_artifact_id(artifact, "process_id", findings)
+    tick_id = require_safe_artifact_id(artifact, "tick_id", findings)
+    remediation_started_at = parse_utc_timestamp(artifact.get("remediation_started_at"), "remediation_started_at", findings)
+    remediation_deadline_at = parse_utc_timestamp(artifact.get("remediation_deadline_at"), "remediation_deadline_at", findings)
+    observed_at = parse_utc_timestamp(artifact.get("observed_at"), "observed_at", findings)
+    evidence_hash = require_sha256(artifact, "evidence_hash", findings)
+    cleanup_status = artifact.get("cleanup_status")
+    if cleanup_status not in REMEDIATION_CLEANUP_STATUSES:
+        blockers.append({"code": "cleanup_status_incomplete", "detail": "cleanup_status must be cleanup_complete or reset_complete"})
+    residual_resource_check = artifact.get("residual_resource_check")
+    if residual_resource_check not in REMEDIATION_RESOURCE_CLEAR_STATUSES:
+        blockers.append({"code": "residual_resources_not_clear", "detail": "residual_resource_check must be clear or none_remaining"})
+
+    expired = False
+    if remediation_started_at is not None and remediation_deadline_at is not None and remediation_deadline_at < remediation_started_at:
+        findings.append({"code": "invalid_deadline_order", "detail": "remediation_deadline_at must be at or after remediation_started_at"})
+    if observed_at is not None and remediation_deadline_at is not None:
+        expired = observed_at >= remediation_deadline_at
+
+    schema_ok = not findings
+    if not schema_ok:
+        status = "invalid_schema"
+        recommended_state = "REMEDIATING"
+        recommended_event = None
+        failure_code = "CONTRACT_VIOLATION"
+        recommended_verdict = "INCOMPLETE"
+    elif expired:
+        status = "cleanup_timeout"
+        recommended_state = "ABORTED"
+        recommended_event = "cleanup_timeout"
+        failure_code = "REMEDIATION_TIMEOUT"
+        recommended_verdict = "INCOMPLETE"
+    elif blockers:
+        status = "cleanup_evidence_invalid"
+        recommended_state = "REMEDIATING"
+        recommended_event = "cleanup_evidence_invalid"
+        failure_code = "INVALID_EVIDENCE"
+        recommended_verdict = "INCOMPLETE"
+    else:
+        status = "cleanup_evidence_valid"
+        recommended_state = "GAP_FILL"
+        recommended_event = "cleanup_evidence_valid"
+        failure_code = None
+        recommended_verdict = "INCOMPLETE"
+
+    return {
+        "ok": schema_ok,
+        "kind": "remediation_evidence",
+        "status": status,
+        "process_id": process_id,
+        "tick_id": tick_id,
+        "cleanup_status": cleanup_status,
+        "residual_resource_check": residual_resource_check,
+        "evidence_hash": evidence_hash,
+        "expired": expired,
+        "recommended_oracle_verdict": recommended_verdict,
+        "recommended_state": recommended_state,
+        "recommended_event": recommended_event,
+        "failure_code": failure_code,
+        "schema_findings": findings,
+        "completion_blockers": blockers,
+    }
+
+
+def validate_completion_artifact(artifact: Dict[str, Any], *, max_retries: int = 0) -> Dict[str, Any]:
+    kind = artifact.get("kind")
+    if kind == "sut_tick_hang":
+        return validate_sut_tick_hang_artifact(artifact, max_retries=max_retries)
+    if kind == "remediation_evidence":
+        return validate_remediation_evidence_artifact(artifact)
+    return {
+        "ok": False,
+        "kind": kind,
+        "status": "invalid_schema",
+        "recommended_oracle_verdict": "INCOMPLETE",
+        "recommended_state": "REMEDIATING",
+        "recommended_event": None,
+        "failure_code": "CONTRACT_VIOLATION",
+        "schema_findings": [{"code": "invalid_kind", "detail": "kind must be sut_tick_hang or remediation_evidence"}],
+        "completion_blockers": [],
+    }
+
+
+def cmd_validate_completion_artifact(args: argparse.Namespace) -> int:
+    artifact = load_json(Path(args.artifact).resolve())
+    if not isinstance(artifact, dict):
+        raise ShRuntimeError("completion artifact must be a JSON object")
+    result = validate_completion_artifact(artifact, max_retries=args.max_retries)
+    if not result["ok"]:
+        return emit(result, 2)
+    if result.get("recommended_state") == "ABORTED":
+        return emit(result, 6)
+    if result.get("status") == "cleanup_evidence_valid":
+        return emit(result)
+    if result.get("recommended_oracle_verdict") == "INCOMPLETE" and result.get("recommended_state") in {"REMEDIATING", "GAP_FILL"}:
+        return emit(result, 5)
+    return emit(result)
+
+
 def cmd_run_resume(args: argparse.Namespace) -> int:
     contract = load_json(Path(args.contract).resolve())
     if not isinstance(contract, dict):
@@ -806,7 +1014,7 @@ def build_directive_payload(args: argparse.Namespace, result: Dict[str, Any], ru
         "reason": args.reason or "",
         "required_next_owner": args.next_owner or default_next_owner(result["action"]),
         "allow_more_execution": result["expected_to_state"] not in TERMINAL_STATES,
-        "oracle_recheck_required": result["action"] in {"gap-fill", "recovery", "continue"},
+        "oracle_recheck_required": result["action"] in {"gap-fill", "recovery", "continue", "remediate"},
         "heartbeat_policy": {
             "tick_seconds": 60,
             "missed_seconds": 180,
@@ -828,6 +1036,8 @@ def default_next_owner(action: str) -> str:
         return "red-team"
     if action == "abort":
         return "none"
+    if action == "remediate":
+        return "external-runner"
     return "goal-loop"
 
 
@@ -1523,6 +1733,21 @@ def eval_validator_result(root: Path, task: Dict[str, Any]) -> Dict[str, Any]:
         if expected_status is not None:
             ok = ok and result.get("status") == expected_status
         return {"ok": ok, "type": validator_type, "result": result}
+    if validator_type == "completion_artifact":
+        artifact = load_json_object((root / str(validator.get("path", ""))).resolve(), "completion artifact fixture")
+        result = validate_completion_artifact(artifact, max_retries=int(validator.get("max_retries", 0)))
+        ok = True
+        for expected_key, result_key in (
+            ("expected_ok", "ok"),
+            ("expected_status", "status"),
+            ("expected_recommended_state", "recommended_state"),
+            ("expected_recommended_event", "recommended_event"),
+            ("expected_oracle_verdict", "recommended_oracle_verdict"),
+            ("expected_failure_code", "failure_code"),
+        ):
+            if expected_key in validator:
+                ok = ok and result.get(result_key) == validator[expected_key]
+        return {"ok": ok, "type": validator_type, "result": result}
     return {"ok": False, "type": validator_type, "error": "unknown eval validator type"}
 
 
@@ -1741,6 +1966,59 @@ def cmd_self_test(_: argparse.Namespace) -> int:
 
         assert transition_result("RUNNING", "oracle_incomplete", "GAP_FILL")["ok"]
         assert not transition_result("RUNNING", "rehydration_pass", "RECOVERY")["ok"]
+        assert transition_result("RUNNING", "sut_hang_incomplete", "REMEDIATING")["ok"]
+        assert transition_result("GAP_FILL", "sut_hang_incomplete", "REMEDIATING")["ok"]
+        assert transition_result("RECOVERY", "sut_hang_incomplete", "REMEDIATING")["ok"]
+        assert transition_result("REMEDIATING", "cleanup_evidence_valid", "GAP_FILL")["ok"]
+        assert transition_result("REMEDIATING", "cleanup_evidence_invalid", "REMEDIATING")["ok"]
+        assert transition_result("REMEDIATING", "cleanup_timeout", "ABORTED")["ok"]
+
+        hash_a = "sha256:" + ("a" * 64)
+        hash_b = "sha256:" + ("b" * 64)
+        hang_artifact = {
+            "kind": "sut_tick_hang",
+            "process_id": "proc_123",
+            "tick_id": "tick_45",
+            "started_at": "2026-06-13T18:10:00Z",
+            "observed_at": "2026-06-13T18:11:00Z",
+            "duration_ms": 60000,
+            "previous_artifact_hash": hash_a,
+            "current_artifact_hash": hash_a,
+            "retry_count": 0,
+        }
+        hang_result = validate_completion_artifact(hang_artifact)
+        assert hang_result["ok"]
+        assert hang_result["status"] == "hang_detected"
+        assert hang_result["recommended_oracle_verdict"] == "INCOMPLETE"
+        assert hang_result["recommended_state"] == "REMEDIATING"
+        assert hang_result["recommended_event"] == "sut_hang_incomplete"
+        progress_artifact = dict(hang_artifact)
+        progress_artifact["current_artifact_hash"] = hash_b
+        progress_result = validate_completion_artifact(progress_artifact)
+        assert progress_result["ok"]
+        assert progress_result["status"] == "progressing"
+        assert progress_result["recommended_state"] == "RUNNING"
+        cleanup_artifact = {
+            "kind": "remediation_evidence",
+            "process_id": "proc_123",
+            "tick_id": "tick_45",
+            "remediation_started_at": "2026-06-13T18:11:00Z",
+            "remediation_deadline_at": "2026-06-13T18:12:00Z",
+            "observed_at": "2026-06-13T18:11:30Z",
+            "cleanup_status": "reset_complete",
+            "residual_resource_check": "clear",
+            "evidence_hash": hash_b,
+        }
+        cleanup_result = validate_completion_artifact(cleanup_artifact)
+        assert cleanup_result["ok"]
+        assert cleanup_result["status"] == "cleanup_evidence_valid"
+        assert cleanup_result["recommended_state"] == "GAP_FILL"
+        expired_cleanup = dict(cleanup_artifact)
+        expired_cleanup["observed_at"] = "2026-06-13T18:12:00Z"
+        expired_result = validate_completion_artifact(expired_cleanup)
+        assert expired_result["ok"]
+        assert expired_result["status"] == "cleanup_timeout"
+        assert expired_result["recommended_state"] == "ABORTED"
 
         manifest = {
             "root": str(root),
@@ -1910,6 +2188,33 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         directive_path = root / ".sh" / "orchestration" / "directives" / "run_1.json"
         write_json(directive_path, directive)
         assert directive_path.exists()
+        directive_cases = [
+            ("RUNNING", "sut_hang_incomplete", "REMEDIATING", "remediate", "external-runner", True, True),
+            ("REMEDIATING", "cleanup_evidence_valid", "GAP_FILL", "gap-fill", "goal-loop", True, True),
+            ("REMEDIATING", "cleanup_evidence_invalid", "REMEDIATING", "remediate", "external-runner", True, True),
+            ("REMEDIATING", "cleanup_timeout", "ABORTED", "abort", "none", False, False),
+        ]
+        for from_state, event, to_state, action, owner, recheck, allow_more in directive_cases:
+            args = argparse.Namespace(
+                root=str(root),
+                run_id=f"directive_{event}",
+                goal_id="goal_1",
+                seed_id="seed_1",
+                active_slice="slice_1",
+                from_state=from_state,
+                event=event,
+                to_state=to_state,
+                reason="self-test",
+                next_owner=None,
+                payload=None,
+            )
+            result = transition_result(from_state, event, to_state)
+            payload = build_directive_payload(args, result, args.run_id)
+            assert payload["to_state"] == to_state
+            assert payload["action"] == action
+            assert payload["required_next_owner"] == owner
+            assert payload["oracle_recheck_required"] is recheck
+            assert payload["allow_more_execution"] is allow_more
 
         entry_path = root / "entry.json"
         write_json(entry_path, {"event_type": "gap_fill", "summary": "self-test"})
@@ -1995,6 +2300,66 @@ def cmd_self_test(_: argparse.Namespace) -> int:
             approval_needed=False,
             approval_result=None,
             event_name="unstuck_accepted",
+        )
+        record_step(
+            root,
+            run_id="run_smoke",
+            step_id="remediate_smoke",
+            operation_name="completion-auditor.hang",
+            tool_name="sh_runtime.validate-completion-artifact",
+            state_before="RUNNING",
+            state_after="REMEDIATING",
+            artifacts=["src/app.txt"],
+            input_text="hang artifact",
+            output_text="sut_hang_incomplete",
+            duration_ms=1,
+            token_usage_input=0,
+            token_usage_output=0,
+            estimated_cost=0.0,
+            error_type="SUT_HANG_TIMEOUT",
+            approval_needed=False,
+            approval_result=None,
+            event_name="sut_hang_incomplete",
+        )
+        record_step(
+            root,
+            run_id="run_smoke",
+            step_id="cleanup_smoke",
+            operation_name="completion-auditor.cleanup",
+            tool_name="sh_runtime.validate-completion-artifact",
+            state_before="REMEDIATING",
+            state_after="GAP_FILL",
+            artifacts=["src/app.txt"],
+            input_text="cleanup evidence",
+            output_text="cleanup_evidence_valid",
+            duration_ms=1,
+            token_usage_input=0,
+            token_usage_output=0,
+            estimated_cost=0.0,
+            error_type=None,
+            approval_needed=False,
+            approval_result=None,
+            event_name="cleanup_evidence_valid",
+        )
+        record_step(
+            root,
+            run_id="run_smoke",
+            step_id="gap_fill_after_cleanup",
+            operation_name="completion-auditor.gap-fill",
+            tool_name="sh_runtime.record-step",
+            state_before="GAP_FILL",
+            state_after="RUNNING",
+            artifacts=["src/app.txt"],
+            input_text="time debt reconciled",
+            output_text="missing_proof_acquired",
+            duration_ms=1,
+            token_usage_input=0,
+            token_usage_output=0,
+            estimated_cost=0.0,
+            error_type=None,
+            approval_needed=False,
+            approval_result=None,
+            event_name="missing_proof_acquired",
         )
         replay = update_replay(root, "run_smoke")
         assert replay["state"]["current_state"] == "RUNNING"
@@ -2118,6 +2483,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-descriptive-evidence", action="store_true", help="Legacy/low-risk mode: allow descriptive evidence strings instead of artifact-backed evidence")
     p.add_argument("--evidence-manifest", help="hash-manifest output whose evidence_assets must include evidence artifacts")
     p.set_defaults(func=cmd_validate_workflow_evidence)
+
+    p = sub.add_parser("validate-completion-artifact", help="Validate Completion Auditor artifact evidence")
+    p.add_argument("--artifact", required=True)
+    p.add_argument("--max-retries", type=int, default=0)
+    p.set_defaults(func=cmd_validate_completion_artifact)
 
     p = sub.add_parser("run-resume", help="Fail-closed resume check runner until a sandbox adapter exists")
     p.add_argument("--contract", required=True)

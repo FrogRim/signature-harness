@@ -32,6 +32,19 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence evals/fixtures/ev
 
 The first command should be completion-eligible because it references tracked evidence artifacts. The second command should fail with exit `5` because descriptive strings are not artifact-backed evidence.
 
+## Hang remediation gate
+
+```powershell
+py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/sut_hang_timeout.json
+py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/sut_hang_progressing.json
+py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/remediation_cleanup_valid.json
+py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/remediation_cleanup_timeout.json
+```
+
+The first command should recommend `INCOMPLETE` and `REMEDIATING`. The
+progressing fixture should remain `RUNNING`. Valid cleanup evidence should route
+to `GAP_FILL`; expired cleanup evidence should recommend `ABORTED`.
+
 ## Benchmark suite
 
 ```powershell

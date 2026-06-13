@@ -1,12 +1,12 @@
 # SH State Machine
 
-`INCOMPLETE` is an Oracle verdict, not a runtime state. It creates `GAP_FILL`.
+`INCOMPLETE` is an Oracle verdict, not a runtime state. Ordinary missing proof creates `GAP_FILL`; external-runner hang artifacts create `REMEDIATING` first.
 
 ## States
 
 | Class | States |
 | --- | --- |
-| Execution | `RUNNING`, `GAP_FILL`, `RECOVERY` |
+| Execution | `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING` |
 | Suspended | `PAUSED`, `BLOCKED` |
 | Terminal | `COMPLETE`, `ABORTED` |
 
@@ -19,6 +19,7 @@ Any transition not listed below is a system-level exception.
 | --- | --- | --- | --- |
 | `RUNNING` | Oracle: all evidence validated | `COMPLETE` | Orchestration writes `close` directive and permanently freezes the loop. |
 | `RUNNING` | Oracle: evidence missing or mismatched | `GAP_FILL` | Orchestration keeps the Seed, narrows the active slice to missing-proof acquisition, and dispatches gap-fill. |
+| `RUNNING`, `GAP_FILL`, `RECOVERY` | External runner hang artifact proves timeout plus no-progress | `REMEDIATING` | Orchestration writes remediation directive for the external runner; SH does not execute cleanup. |
 | `RUNNING` | Oracle: auth, user interaction, permission, or external state required | `BLOCKED` | Orchestration dumps blocked receipt and parks the process. |
 | `RUNNING` | Red-team: 3-strikes no-progress | `PAUSED` | Red-team/evolution/unstuck chooses a new route before further execution. |
 | `RUNNING` | Heartbeat: missed plus timeout, or critical risk | `ABORTED` | Orchestration hard-stops the run and preserves evidence. |
@@ -32,6 +33,10 @@ Any transition not listed below is a system-level exception.
 | `RECOVERY` | Oracle: auth, user interaction, permission, or external state required | `BLOCKED` | Orchestration parks the recovery slice and writes a new blocked receipt. |
 | `RECOVERY` | Drift detected | `PAUSED` | Orchestration routes to evolution, unstuck, or clarification. |
 | `RECOVERY` | Heartbeat timeout, critical risk, or security violation | `ABORTED` | Orchestration hard-stops the recovery run and preserves evidence. |
+| `REMEDIATING` | Cleanup/reset evidence valid | `GAP_FILL` | Reconcile time debt and missing proof before normal execution resumes. |
+| `REMEDIATING` | Cleanup/reset evidence invalid but deadline open | `REMEDIATING` | Keep external runner on remediation evidence. |
+| `REMEDIATING` | Cleanup/reset deadline expired | `ABORTED` | Environment control is lost; abort run. |
+| `REMEDIATING` | Heartbeat timeout, critical risk, or security violation | `ABORTED` | Orchestration hard-stops the remediation run and preserves evidence. |
 | `PAUSED` | Evolution, unstuck, or Seed update accepted | `RUNNING` | Orchestration dispatches the revised route. |
 | `PAUSED` | Abort requested, critical risk, or security violation | `ABORTED` | Orchestration permanently discards the loop and preserves evidence. |
 

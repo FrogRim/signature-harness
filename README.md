@@ -39,8 +39,10 @@ flowchart TD
   G --> H["Oracle Verification"]
   H -->|COMPLETE| I["Close Run"]
   H -->|INCOMPLETE verdict| J["GAP_FILL slice"]
+  H -->|Hang artifact| N["REMEDIATING"]
   H -->|BLOCKED| K["Blocked Receipt + Rehydration Gate"]
   H -->|Drift / No Progress| L["Red-team / Evolution / Unstuck"]
+  N --> J
   J --> F
   K --> M["RECOVERY"]
   M --> F
@@ -62,7 +64,7 @@ oracle-verification is the only path to COMPLETE.
 | Goal loop contract | `skills/goal-loop`, `/sh`, `$sh-goal` | Keeps the public workflow surface small and goal-centered. |
 | Runtime state | `.sh/runs/<run_id>/run_manifest.json`, `state.json`, `step_ledger.jsonl`, `handoff.md` | A new session or reviewer can reconstruct the run without trusting chat history. |
 | Trace and replay | `trace.jsonl`, `tool_calls.jsonl`, `cost_latency.json`, `replay.json` | Completion claims can be tied to machine-readable evidence. |
-| State machine | `RUNNING`, `GAP_FILL`, `RECOVERY`, `PAUSED`, `BLOCKED`, `COMPLETE`, `ABORTED` | Invalid transitions fail closed instead of becoming LLM judgment calls. |
+| State machine | `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING`, `PAUSED`, `BLOCKED`, `COMPLETE`, `ABORTED` | Invalid transitions fail closed instead of becoming LLM judgment calls. |
 | Oracle gate | `validate-workflow-evidence`, evidence manifests, gap-fill verdicts | "Done" requires artifacts, not descriptive confidence. |
 | Red-team pressure | `skills/red-team`, UltraQA negative probes | Optimism, sycophancy, no-progress loops, and false completion are treated as defects. |
 | Tool contracts | `schemas/tool_contracts.json` and schema validation | Runtime commands have declared inputs, outputs, exit codes, side effects, and failure modes. |
@@ -434,13 +436,13 @@ invalid schema, and `5` for schema-valid incomplete evidence.
 
 ## Termination And Recovery
 
-Oracle verdicts are not all runtime states. `INCOMPLETE` is a verdict only; it must create a narrowed `GAP_FILL` execution state instead of an ordinary retry.
+Oracle verdicts are not all runtime states. `INCOMPLETE` is a verdict only; it usually creates a narrowed `GAP_FILL` execution state instead of an ordinary retry. External-runner hang artifacts are the exception: they create `REMEDIATING` first so cleanup/reset evidence can be gated before returning to `GAP_FILL`.
 
 Runtime states:
 
 | Class | States |
 | --- | --- |
-| Execution | `RUNNING`, `GAP_FILL`, `RECOVERY` |
+| Execution | `RUNNING`, `GAP_FILL`, `RECOVERY`, `REMEDIATING` |
 | Suspended | `PAUSED`, `BLOCKED` |
 | Terminal | `COMPLETE`, `ABORTED` |
 
@@ -450,6 +452,7 @@ Any transition not listed here is a system-level exception.
 | --- | --- | --- | --- |
 | `RUNNING` | Oracle `COMPLETE` | `COMPLETE` | Orchestration writes `close` directive and permanently freezes the loop. |
 | `RUNNING` | Oracle `INCOMPLETE` | `GAP_FILL` | Orchestration keeps the Seed, shrinks the active slice to missing-proof acquisition, and dispatches a gap-fill directive. |
+| `RUNNING`, `GAP_FILL`, `RECOVERY` | External runner hang artifact proves timeout plus no-progress | `REMEDIATING` | Orchestration writes a remediation directive for the external runner; SH does not kill or clean the SUT. |
 | `RUNNING` | Oracle `BLOCKED` | `BLOCKED` | Orchestration dumps blocked receipt and parks the process. |
 | `RUNNING` | Red-team 3-strikes no-progress | `PAUSED` | Red-team/evolution/unstuck chooses a new route before any further execution. |
 | `RUNNING` | Missed heartbeat plus timeout, or critical risk | `ABORTED` | Orchestration hard-stops the run and preserves evidence. |
@@ -459,6 +462,9 @@ Any transition not listed here is a system-level exception.
 | `BLOCKED` | Rehydration gate fails | `BLOCKED` | Orchestration keeps the run parked and asks for the missing user/external action. |
 | `RECOVERY` | Recovery evidence validated | `RUNNING` | Orchestration restores the original active-slice authority after oracle recheck. |
 | `RECOVERY` | Drift detected | `PAUSED` | Orchestration routes to evolution, unstuck, or clarification. |
+| `REMEDIATING` | Cleanup/reset evidence valid | `GAP_FILL` | Orchestration reconciles time debt and missing proof before normal execution resumes. |
+| `REMEDIATING` | Cleanup/reset evidence invalid but deadline open | `REMEDIATING` | External runner remains responsible for remediation evidence. |
+| `REMEDIATING` | Cleanup/reset evidence deadline expired | `ABORTED` | Orchestration judges environment control lost and aborts the run. |
 | `PAUSED` | Evolution, unstuck, or Seed update accepted | `RUNNING` | Orchestration dispatches the revised route. |
 
 `COMPLETE` and `ABORTED` are terminal. A terminal loop is never resumed. Its trace, receipts, and evidence remain durable.
@@ -723,7 +729,8 @@ The oracle records:
 Verdict handling:
 
 - `COMPLETE` closes the loop.
-- `INCOMPLETE` is not a state; it must include an evidence gap report and dispatch `GAP_FILL`.
+- `INCOMPLETE` is not a state; it must include an evidence gap report and usually dispatch `GAP_FILL`.
+- External-runner hang artifacts are `INCOMPLETE` verdicts that dispatch `REMEDIATING` until cleanup/reset evidence is validated.
 - `BLOCKED` parks the loop and requires secure rehydration before `RECOVERY`.
 
 ## Evolution And Unstuck

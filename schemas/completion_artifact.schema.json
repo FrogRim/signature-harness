@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frogrim.local/signature-harness/completion_artifact.schema.json",
+  "title": "Signature Harness Completion Auditor Artifact",
+  "type": "object",
+  "required": ["kind"],
+  "properties": {
+    "kind": {"type": "string"},
+    "process_id": {"type": "string"},
+    "tick_id": {"type": "string"},
+    "started_at": {"type": "string"},
+    "observed_at": {"type": "string"},
+    "duration_ms": {"type": "integer", "minimum": 1},
+    "previous_artifact_hash": {"type": "string"},
+    "current_artifact_hash": {"type": "string"},
+    "retry_count": {"type": "integer", "minimum": 0},
+    "remediation_started_at": {"type": "string"},
+    "remediation_deadline_at": {"type": "string"},
+    "cleanup_status": {"type": "string"},
+    "residual_resource_check": {"type": "string"},
+    "evidence_hash": {"type": "string"}
+  },
+  "additionalProperties": true
+}

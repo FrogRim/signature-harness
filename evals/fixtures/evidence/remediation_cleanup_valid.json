@@ -1,0 +1,11 @@
+{
+  "kind": "remediation_evidence",
+  "process_id": "proc_123",
+  "tick_id": "tick_45",
+  "remediation_started_at": "2026-06-13T18:11:00Z",
+  "remediation_deadline_at": "2026-06-13T18:12:00Z",
+  "observed_at": "2026-06-13T18:11:30Z",
+  "cleanup_status": "reset_complete",
+  "residual_resource_check": "clear",
+  "evidence_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}
