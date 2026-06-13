@@ -1,0 +1,8 @@
+{
+  "id": "scoped_network_blocked",
+  "permission_profile": "scoped_network",
+  "filesystem": {"writes": [], "destructive": false},
+  "network": {"domains": ["evil.example"]},
+  "command": {"argv": ["python", "--version"], "shell": false},
+  "approval": {"id": "scoped_network_blocked", "result": "denied", "reviewer": "fixture", "reason": "domain not allowlisted"}
+}

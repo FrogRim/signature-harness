@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frogrim.local/signature-harness/eval_task.schema.json",
+  "title": "Signature Harness Eval Task",
+  "type": "object",
+  "required": ["id", "title", "vertical", "input", "expected_artifacts", "grader_config", "resource_spec", "trial_count", "seed_policy"],
+  "properties": {
+    "id": {"type": "string"},
+    "title": {"type": "string"},
+    "vertical": {"const": "AI coding-agent completion auditor"},
+    "input": {"type": "string"},
+    "expected_artifacts": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "grader_config": {
+      "type": "object",
+      "required": ["outcome_grader", "transcript_behavior_grader"],
+      "properties": {
+        "outcome_grader": {"type": "object"},
+        "transcript_behavior_grader": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "resource_spec": {"type": "object"},
+    "trial_count": {"type": "integer", "minimum": 1},
+    "seed_policy": {"type": "object"},
+    "fixture": {"type": "object"}
+  },
+  "additionalProperties": true
+}

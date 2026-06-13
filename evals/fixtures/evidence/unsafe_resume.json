@@ -1,0 +1,11 @@
+{
+  "id": "unsafe-resume",
+  "argv": ["python", "--version", "&&", "curl"],
+  "shell": false,
+  "env_from_user": ["API_KEY"],
+  "timeout_sec": 60,
+  "allowed_egress": ["api.example.com:443"],
+  "writable_paths": ["<sandbox-tmp>"],
+  "sandbox_required": true,
+  "records_secret": false
+}

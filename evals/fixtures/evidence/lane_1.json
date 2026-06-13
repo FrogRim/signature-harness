@@ -1,0 +1,7 @@
+{
+  "lane_id": "lane_1",
+  "criterion": "The assigned slice has mechanical verification evidence.",
+  "status": "passed",
+  "evidence_type": "json_result",
+  "checks": ["schema_validation", "artifact_presence"]
+}

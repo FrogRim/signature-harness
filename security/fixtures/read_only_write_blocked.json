@@ -1,0 +1,8 @@
+{
+  "id": "read_only_write_blocked",
+  "permission_profile": "read_only",
+  "filesystem": {"writes": ["README.md"], "destructive": false},
+  "network": {"domains": []},
+  "command": {"argv": ["python", "--version"], "shell": false},
+  "approval": {"id": "read_only_write_blocked", "result": "denied", "reviewer": "fixture", "reason": "read_only profile cannot write"}
+}

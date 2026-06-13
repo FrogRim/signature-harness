@@ -1,0 +1,157 @@
+{
+  "failure_types": [
+    {
+      "code": "MISSING_CONTEXT",
+      "severity": "medium",
+      "retriable": true,
+      "recovery_action": "pause_and_request_or_retrieve_context",
+      "owner": "orchestration-loop",
+      "evidence_required": ["missing_context_report"],
+      "user_visible_message": "Required context is missing; the run must retrieve it or ask for it before continuing."
+    },
+    {
+      "code": "WRONG_TOOL",
+      "severity": "medium",
+      "retriable": true,
+      "recovery_action": "reroute_to_allowed_tool_contract",
+      "owner": "orchestration-loop",
+      "evidence_required": ["tool_call_trace", "routing_receipt"],
+      "user_visible_message": "The run selected a tool outside the active contract."
+    },
+    {
+      "code": "TOOL_SCHEMA_ERROR",
+      "severity": "medium",
+      "retriable": true,
+      "recovery_action": "repair_args_against_tool_schema_once",
+      "owner": "tool-contract-validator",
+      "evidence_required": ["schema_validation_error"],
+      "user_visible_message": "Tool input or output did not satisfy the registered schema."
+    },
+    {
+      "code": "FAILED_TEST",
+      "severity": "high",
+      "retriable": true,
+      "recovery_action": "gap_fill_failed_test_evidence",
+      "owner": "oracle-verification",
+      "evidence_required": ["test_log", "failure_summary"],
+      "user_visible_message": "Mechanical verification failed; completion is blocked until the failing check is addressed."
+    },
+    {
+      "code": "LOOP_DETECTED",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "pause_for_unstuck_or_seed_evolution",
+      "owner": "red-team",
+      "evidence_required": ["repeated_step_signatures"],
+      "user_visible_message": "The run is repeating without new evidence."
+    },
+    {
+      "code": "PERMISSION_DENIED",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "block_until_policy_or_approval_changes",
+      "owner": "security-policy",
+      "evidence_required": ["policy_decision"],
+      "user_visible_message": "The requested action is outside the active permission profile."
+    },
+    {
+      "code": "UNSAFE_ACTION",
+      "severity": "critical",
+      "retriable": false,
+      "recovery_action": "abort_or_request_explicit_approval",
+      "owner": "security-policy",
+      "evidence_required": ["unsafe_action_receipt"],
+      "user_visible_message": "A dangerous action was blocked by policy."
+    },
+    {
+      "code": "OVER_BUDGET",
+      "severity": "medium",
+      "retriable": false,
+      "recovery_action": "pause_and_reduce_scope",
+      "owner": "orchestration-loop",
+      "evidence_required": ["cost_latency_report"],
+      "user_visible_message": "The run exceeded its cost, latency, or step budget."
+    },
+    {
+      "code": "NEEDS_HUMAN_DECISION",
+      "severity": "medium",
+      "retriable": false,
+      "recovery_action": "blocked_until_user_decision",
+      "owner": "orchestration-loop",
+      "evidence_required": ["blocked_receipt"],
+      "user_visible_message": "A human decision is required before the run can continue."
+    },
+    {
+      "code": "NO_PROGRESS",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "pause_and_route_to_red_team",
+      "owner": "red-team",
+      "evidence_required": ["no_progress_report"],
+      "user_visible_message": "The run is not producing new validated evidence."
+    },
+    {
+      "code": "REPEATED_TOOL_FAILURE",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "pause_and_replace_tool_strategy",
+      "owner": "orchestration-loop",
+      "evidence_required": ["tool_error_series"],
+      "user_visible_message": "The same tool failure repeated and the strategy must change."
+    },
+    {
+      "code": "INVALID_EVIDENCE",
+      "severity": "high",
+      "retriable": true,
+      "recovery_action": "gap_fill_valid_artifact_evidence",
+      "owner": "oracle-verification",
+      "evidence_required": ["evidence_validator_output"],
+      "user_visible_message": "The completion evidence is missing, stale, or invalid."
+    },
+    {
+      "code": "BLOCKED_APPROVAL",
+      "severity": "medium",
+      "retriable": false,
+      "recovery_action": "blocked_until_approval_result",
+      "owner": "security-policy",
+      "evidence_required": ["approval_request"],
+      "user_visible_message": "The run is waiting for an approval decision."
+    },
+    {
+      "code": "UNSAFE_RESUME",
+      "severity": "critical",
+      "retriable": false,
+      "recovery_action": "abort_resume_and_keep_blocked",
+      "owner": "resume-check-validator",
+      "evidence_required": ["resume_contract_validation"],
+      "user_visible_message": "The resume check contract is unsafe and cannot be executed."
+    },
+    {
+      "code": "CONTRACT_VIOLATION",
+      "severity": "high",
+      "retriable": false,
+      "recovery_action": "abort_or_rewrite_contract",
+      "owner": "tool-contract-validator",
+      "evidence_required": ["contract_violation_report"],
+      "user_visible_message": "A runtime or tool contract was violated."
+    },
+    {
+      "code": "ARTIFACT_MISMATCH",
+      "severity": "high",
+      "retriable": true,
+      "recovery_action": "regenerate_or_rebind_artifact_manifest",
+      "owner": "oracle-verification",
+      "evidence_required": ["artifact_hash_mismatch"],
+      "user_visible_message": "A referenced artifact differs from its manifest."
+    },
+    {
+      "code": "BENCHMARK_INFRA_FAILURE",
+      "severity": "medium",
+      "retriable": true,
+      "recovery_action": "repair_eval_fixture_or_schema",
+      "owner": "eval-harness",
+      "evidence_required": ["eval_infra_finding"],
+      "user_visible_message": "The benchmark infrastructure failed before judging model behavior."
+    }
+  ]
+}

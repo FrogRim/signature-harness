@@ -1,0 +1,7 @@
+{
+  "id": "scoped_network_ok",
+  "permission_profile": "scoped_network",
+  "filesystem": {"writes": [], "destructive": false},
+  "network": {"domains": ["github.com"]},
+  "command": {"argv": ["python", "--version"], "shell": false}
+}

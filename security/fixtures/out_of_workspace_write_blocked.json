@@ -1,0 +1,8 @@
+{
+  "id": "out_of_workspace_write_blocked",
+  "permission_profile": "workspace_write",
+  "filesystem": {"writes": ["..\\outside.txt"], "destructive": false},
+  "network": {"domains": []},
+  "command": {"argv": ["python", "--version"], "shell": false},
+  "approval": {"id": "out_of_workspace_write_blocked", "result": "denied", "reviewer": "fixture", "reason": "write escapes workspace"}
+}

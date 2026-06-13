@@ -1,0 +1,1 @@
+{"tool":"record-step","missing_required_fields":["run_id","step_id"],"expected_detection":"TOOL_SCHEMA_ERROR"}

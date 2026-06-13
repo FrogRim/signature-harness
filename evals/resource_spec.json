@@ -1,0 +1,11 @@
+{
+  "cpu": "repo-local deterministic fixture runner",
+  "memory": "not measured; record host memory separately for non-fixture trials",
+  "time_budget_sec": 120,
+  "concurrency": 1,
+  "network": "offline-by-default",
+  "network_condition_assumptions": "No external calls are required for deterministic fixture evals.",
+  "seed": "completion-auditor-v1",
+  "retries": 0,
+  "trial_default": 3
+}

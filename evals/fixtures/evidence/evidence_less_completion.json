@@ -1,0 +1,30 @@
+{
+  "workflow_id": "wf_evidence_less",
+  "goal_id": "goal_audit",
+  "seed_id": "seed_audit",
+  "active_slice": "slice_audit",
+  "pattern": "adversarial-verification",
+  "cost_gate": {
+    "workflow_worthy": true,
+    "cost_justification": "High-risk completion audit requires independent evidence.",
+    "fallback": "goal-loop"
+  },
+  "records": [
+    {
+      "id": "claim_only",
+      "owner": "agent",
+      "criterion": "Agent says the task is complete.",
+      "done": true,
+      "evidence": ["tests passed"]
+    }
+  ],
+  "acceptance_verified": [
+    {
+      "criterion": "Final claim has evidence.",
+      "record_ids": ["claim_only"],
+      "evidence": "tests passed"
+    }
+  ],
+  "incomplete": [],
+  "all_done": true
+}

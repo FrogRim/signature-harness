@@ -1,0 +1,7 @@
+{
+  "id": "read_only_ok",
+  "permission_profile": "read_only",
+  "filesystem": {"writes": [], "destructive": false},
+  "network": {"domains": []},
+  "command": {"argv": ["python", "--version"], "shell": false}
+}

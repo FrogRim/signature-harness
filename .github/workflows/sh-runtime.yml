@@ -1,0 +1,22 @@
+name: SH Runtime Contracts
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  runtime-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile runtime
+        run: python -m py_compile scripts/sh_runtime.py
+      - name: Validate schemas, contracts, taxonomy, eval tasks, and policy
+        run: python scripts/sh_runtime.py validate-schemas --root .
+      - name: Run runtime self-test
+        run: python scripts/sh_runtime.py self-test
+      - name: Run deterministic benchmark suite
+        run: python scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3 --eval-run-id ci-benchmark --reset-existing

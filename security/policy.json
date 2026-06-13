@@ -1,0 +1,32 @@
+{
+  "profiles": {
+    "read_only": {
+      "filesystem": {"read": ["."], "write": []},
+      "network_allowlist": [],
+      "shell": {"allowed": true, "dangerous_meta_requires_approval": true}
+    },
+    "workspace_write": {
+      "filesystem": {"read": ["."], "write": ["."]},
+      "network_allowlist": [],
+      "shell": {"allowed": true, "dangerous_meta_requires_approval": true}
+    },
+    "scoped_network": {
+      "filesystem": {"read": ["."], "write": [".sh/"]},
+      "network_allowlist": ["api.example.com", "github.com"],
+      "shell": {"allowed": true, "dangerous_meta_requires_approval": true}
+    },
+    "danger_full_access": {
+      "filesystem": {"read": ["."], "write": ["."], "destructive_allowed_with_approval": true},
+      "network_allowlist": ["*"],
+      "shell": {"allowed": true, "dangerous_meta_requires_approval": true}
+    }
+  },
+  "approval_triggers": [
+    "destructive_action",
+    "out_of_workspace_write",
+    "unrestricted_network",
+    "shell_true",
+    "shell_metacharacter",
+    "read_only_write"
+  ]
+}

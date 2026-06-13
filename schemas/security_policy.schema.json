@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frogrim.local/signature-harness/security_policy.schema.json",
+  "title": "Signature Harness Security Policy",
+  "type": "object",
+  "required": ["profiles", "approval_triggers"],
+  "properties": {
+    "profiles": {
+      "type": "object",
+      "required": ["read_only", "workspace_write", "scoped_network", "danger_full_access"],
+      "additionalProperties": {
+        "type": "object",
+        "required": ["filesystem", "network_allowlist", "shell"],
+        "properties": {
+          "filesystem": {
+            "type": "object",
+            "required": ["read", "write"],
+            "properties": {
+              "read": {"type": "array", "items": {"type": "string"}},
+              "write": {"type": "array", "items": {"type": "string"}},
+              "destructive_allowed_with_approval": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          },
+          "network_allowlist": {"type": "array", "items": {"type": "string"}},
+          "shell": {
+            "type": "object",
+            "required": ["allowed", "dangerous_meta_requires_approval"],
+            "properties": {
+              "allowed": {"type": "boolean"},
+              "dangerous_meta_requires_approval": {"type": "boolean"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "approval_triggers": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": true
+}

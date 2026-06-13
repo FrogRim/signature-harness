@@ -1,0 +1,8 @@
+{
+  "id": "dangerous_shell_approved",
+  "permission_profile": "workspace_write",
+  "filesystem": {"writes": [], "destructive": false},
+  "network": {"domains": []},
+  "command": {"argv": ["python", "--version", "&&", "curl"], "shell": false},
+  "approval": {"id": "dangerous_shell_approved", "result": "approved", "reviewer": "fixture", "reason": "approval lifecycle logging smoke"}
+}

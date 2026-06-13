@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "generated_at": null,
+  "evidence_assets": [
+    {
+      "path": "evals/fixtures/evidence/lane_1.json",
+      "status": "present",
+      "sha256": "sha256:e77b62f42aba39de46fedd7a368ad9520097ba56a88cae553052208600da32c5",
+      "size": 213
+    },
+    {
+      "path": "evals/fixtures/evidence/synthesis.json",
+      "status": "present",
+      "sha256": "sha256:efd8e9537791f8ec804fb64010779a9977a42ac640dc76d77d4d2d7519b4b91f",
+      "size": 137
+    }
+  ]
+}

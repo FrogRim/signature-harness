@@ -14,200 +14,71 @@ import datetime as _dt
 import hashlib
 import json
 import os
+import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-
-EXECUTION_STATES = {"RUNNING", "GAP_FILL", "RECOVERY"}
-SUSPENDED_STATES = {"PAUSED", "BLOCKED"}
-TERMINAL_STATES = {"COMPLETE", "ABORTED"}
-ALL_STATES = EXECUTION_STATES | SUSPENDED_STATES | TERMINAL_STATES
-
-TRANSITIONS: Dict[Tuple[str, str], str] = {
-    ("RUNNING", "oracle_complete"): "COMPLETE",
-    ("RUNNING", "oracle_incomplete"): "GAP_FILL",
-    ("RUNNING", "oracle_blocked"): "BLOCKED",
-    ("RUNNING", "redteam_no_progress"): "PAUSED",
-    ("RUNNING", "heartbeat_timeout"): "ABORTED",
-    ("RUNNING", "critical_risk"): "ABORTED",
-    ("RUNNING", "security_violation"): "ABORTED",
-    ("GAP_FILL", "missing_proof_acquired"): "RUNNING",
-    ("GAP_FILL", "proof_still_missing"): "GAP_FILL",
-    ("GAP_FILL", "proof_still_missing_3x"): "PAUSED",
-    ("GAP_FILL", "oracle_blocked"): "BLOCKED",
-    ("GAP_FILL", "heartbeat_timeout"): "ABORTED",
-    ("GAP_FILL", "critical_risk"): "ABORTED",
-    ("GAP_FILL", "security_violation"): "ABORTED",
-    ("BLOCKED", "rehydration_pass"): "RECOVERY",
-    ("BLOCKED", "rehydration_fail"): "BLOCKED",
-    ("RECOVERY", "recovery_validated"): "RUNNING",
-    ("RECOVERY", "oracle_blocked"): "BLOCKED",
-    ("RECOVERY", "drift_detected"): "PAUSED",
-    ("RECOVERY", "heartbeat_timeout"): "ABORTED",
-    ("RECOVERY", "critical_risk"): "ABORTED",
-    ("RECOVERY", "security_violation"): "ABORTED",
-    ("PAUSED", "evolution_accepted"): "RUNNING",
-    ("PAUSED", "unstuck_accepted"): "RUNNING",
-    ("PAUSED", "seed_update_accepted"): "RUNNING",
-    ("PAUSED", "abort_requested"): "ABORTED",
-    ("PAUSED", "critical_risk"): "ABORTED",
-    ("PAUSED", "security_violation"): "ABORTED",
-}
-
-EVENT_ACTION = {
-    "oracle_complete": "close",
-    "oracle_incomplete": "gap-fill",
-    "oracle_blocked": "blocked",
-    "redteam_no_progress": "pause",
-    "heartbeat_timeout": "abort",
-    "critical_risk": "abort",
-    "security_violation": "abort",
-    "missing_proof_acquired": "continue",
-    "proof_still_missing": "gap-fill",
-    "proof_still_missing_3x": "pause",
-    "abort_requested": "abort",
-    "rehydration_pass": "recovery",
-    "rehydration_fail": "blocked",
-    "recovery_validated": "continue",
-    "drift_detected": "pause",
-    "evolution_accepted": "continue",
-    "unstuck_accepted": "continue",
-    "seed_update_accepted": "continue",
-}
-
-LEDGER_EVENT_TYPES = {
-    "goal_created",
-    "active_slice_selected",
-    "seed_created",
-    "seed_accepted",
-    "rule_memory_read",
-    "orchestration",
-    "directive",
-    "heartbeat",
-    "checkpoint",
-    "red_team",
-    "oracle",
-    "candidate",
-    "promotion",
-    "hypothesis",
-    "workflow",
-    "gap",
-    "gap_fill",
-    "recovery",
-    "evolution",
-    "unstuck",
-    "steering",
-    "paused",
-    "blocked",
-    "aborted",
-    "complete",
-}
-
-DEFAULT_DRIFT_EXCLUDE_NAMES = {
-    ".git",
-    ".sh",
-    ".omx",
-    "__pycache__",
-    "node_modules",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-}
-
-SHELL_META_PATTERNS = ("&&", ";", "|", "&", "`", "$(", "%", "^", "!", ">", "<", "\n", "\r")
-SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-EGRESS_RE = re.compile(r"^[A-Za-z0-9.-]+:[0-9]{1,5}$")
-WINDOWS_SCRIPT_SUFFIXES = (".bat", ".cmd", ".ps1")
-WINDOWS_SCRIPT_SHIM_NAMES = {"npm", "npx", "pnpm", "yarn"}
-RESERVED_DIRECTIVE_KEYS = {
-    "run_id",
-    "goal_id",
-    "seed_id",
-    "active_slice",
-    "issued_at",
-    "from_state",
-    "to_state",
-    "action",
-    "required_next_owner",
-    "allow_more_execution",
-    "oracle_recheck_required",
-    "heartbeat_policy",
-}
-RESERVED_LEDGER_KEYS = {"prev_hash", "entry_hash"}
-DYNAMIC_WORKFLOW_PATTERNS = {
-    "classify-and-act",
-    "fan-out-and-synthesize",
-    "adversarial-verification",
-    "generate-and-filter",
-    "tournament",
-    "loop-until-done",
-}
-
-
-class ShRuntimeError(Exception):
-    def __init__(self, message: str, code: int = 2, payload: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.payload = payload or {}
-
-
-def utc_now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+from sh_runtime_core import (
+    AGENT_NAME,
+    AGENT_VERSION,
+    ALLOWED_EVIDENCE_SUFFIXES,
+    DEFAULT_DRIFT_EXCLUDE_NAMES,
+    DYNAMIC_WORKFLOW_PATTERNS,
+    EXPECTED_SCHEMA_FILES,
+    EXPECTED_TOOL_CONTRACTS,
+    FAILURE_CODES,
+    LEDGER_EVENT_TYPES,
+    PERMISSION_PROFILES,
+    RESERVED_DIRECTIVE_KEYS,
+    RESERVED_LEDGER_KEYS,
+    RUN_ARTIFACT_FILES,
+    SAFE_ID_RE,
+    TERMINAL_STATES,
+    WINDOWS_SCRIPT_SHIM_NAMES,
+    WINDOWS_SCRIPT_SUFFIXES,
+    ShRuntimeError,
+    append_jsonl,
+    contains_excluded_part,
+    contract_sha256,
+    default_sh_dirs,
+    evidence_strings,
+    ensure_state,
+    file_sha256,
+    has_evidence,
+    has_shell_meta,
+    is_non_empty_string,
+    is_safe_relative_path,
+    is_under,
+    json_sha256,
+    load_json,
+    load_json_array,
+    load_json_object,
+    new_span_id,
+    new_trace_id,
+    now_epoch_ms,
+    read_jsonl,
+    rel_posix,
+    safe_optional_float,
+    safe_optional_int,
+    sanitize_id,
+    stable_hash_text,
+    transition_result,
+    utc_now,
+    validate_against_schema,
+    valid_egress,
+    write_json,
+)
 
 
 def emit(payload: Dict[str, Any], code: int = 0) -> int:
     print(json.dumps(payload, indent=2, sort_keys=True))
     return code
-
-
-def load_json(path: Path) -> Any:
-    try:
-        with path.open("r", encoding="utf-8-sig") as f:
-            return json.load(f)
-    except json.JSONDecodeError as exc:
-        raise ShRuntimeError(f"Invalid JSON in {path}: {exc}") from exc
-
-
-def write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(payload, f, indent=2, sort_keys=True)
-        f.write("\n")
-    os.replace(str(tmp), str(path))
-
-
-def sanitize_id(value: str, label: str) -> str:
-    if not value or not SAFE_ID_RE.match(value):
-        raise ShRuntimeError(f"Unsafe {label}: {value!r}")
-    return value
-
-
-def ensure_state(value: str, label: str) -> str:
-    if value not in ALL_STATES:
-        raise ShRuntimeError(f"Unknown {label}: {value!r}")
-    return value
-
-
-def transition_result(from_state: str, event: str, requested_to: Optional[str] = None) -> Dict[str, Any]:
-    ensure_state(from_state, "from_state")
-    expected = TRANSITIONS.get((from_state, event))
-    ok = expected is not None and (requested_to is None or requested_to == expected)
-    return {
-        "ok": ok,
-        "from_state": from_state,
-        "event": event,
-        "expected_to_state": expected,
-        "requested_to_state": requested_to,
-        "to_state": expected if ok else requested_to,
-        "action": EVENT_ACTION.get(event),
-        "terminal": expected in TERMINAL_STATES if expected else False,
-        "listed_transition": expected is not None,
-    }
 
 
 def cmd_validate_transition(args: argparse.Namespace) -> int:
@@ -218,28 +89,173 @@ def cmd_validate_transition(args: argparse.Namespace) -> int:
     return emit(payload)
 
 
-def default_sh_dirs(root: Path) -> List[Path]:
-    names = [
-        "seeds",
-        "rules",
-        "runs",
-        "orchestration",
-        "orchestration/directives",
-        "orchestration/blocked",
-        "orchestration/gap-fill",
-        "orchestration/security",
-        "evidence",
-        "candidates",
-        "promotions",
-        "hypotheses",
-        "workflows",
-        "gaps",
-        "red-team",
-        "oracle",
-        "evolution",
-        "unstuck",
+def run_path(root: Path, run_id: str) -> Path:
+    safe_run_id = sanitize_id(run_id, "run_id")
+    path = root.resolve() / ".sh" / "runs" / safe_run_id
+    runs_root = root.resolve() / ".sh" / "runs"
+    if not is_under(path, runs_root):
+        raise ShRuntimeError(f"run path escapes .sh/runs: {run_id!r}")
+    return path
+
+
+def run_file(root: Path, run_id: str, key: str) -> Path:
+    filename = RUN_ARTIFACT_FILES[key]
+    return run_path(root, run_id) / filename
+
+
+def require_run(root: Path, run_id: str) -> Path:
+    path = run_path(root, run_id)
+    if not path.exists():
+        raise ShRuntimeError(f"run does not exist: {run_id!r}")
+    return path
+
+
+def load_run_manifest(root: Path, run_id: str) -> Dict[str, Any]:
+    return load_json_object(run_file(root, run_id, "manifest"), "run manifest")
+
+
+def load_run_state(root: Path, run_id: str) -> Dict[str, Any]:
+    return load_json_object(run_file(root, run_id, "state"), "run state")
+
+
+def write_run_state(root: Path, run_id: str, state: Dict[str, Any]) -> None:
+    state["updated_at"] = utc_now()
+    write_json(run_file(root, run_id, "state"), state)
+
+
+def relative_artifact_entry(root: Path, artifact: str) -> Dict[str, Any]:
+    path = (root / artifact).resolve()
+    if not is_under(path, root):
+        raise ShRuntimeError(f"artifact escapes root: {artifact!r}")
+    if not path.exists() or not path.is_file():
+        raise ShRuntimeError(f"artifact does not exist: {artifact!r}")
+    suffix = path.suffix.lower()
+    if suffix and suffix not in ALLOWED_EVIDENCE_SUFFIXES:
+        raise ShRuntimeError(f"unsupported artifact type: {artifact!r}", payload={"allowed_suffixes": sorted(ALLOWED_EVIDENCE_SUFFIXES)})
+    stat = path.stat()
+    return {
+        "path": rel_posix(path, root),
+        "sha256": file_sha256(path),
+        "size": stat.st_size,
+        "mtime_utc": _dt.datetime.fromtimestamp(stat.st_mtime, _dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "suffix": suffix or "<none>",
+    }
+
+
+def load_artifact_index(root: Path, run_id: str) -> Dict[str, Any]:
+    path = run_file(root, run_id, "artifacts")
+    if not path.exists():
+        return {"run_id": run_id, "artifacts": []}
+    return load_json_object(path, "artifact index")
+
+
+def update_artifact_index(root: Path, run_id: str, artifact_paths: List[str]) -> List[Dict[str, Any]]:
+    index = load_artifact_index(root, run_id)
+    existing = {entry.get("path"): entry for entry in index.get("artifacts", []) if isinstance(entry, dict)}
+    entries: List[Dict[str, Any]] = []
+    for artifact in artifact_paths:
+        entry = relative_artifact_entry(root, artifact)
+        existing[entry["path"]] = entry
+        entries.append(entry)
+    index["run_id"] = run_id
+    index["updated_at"] = utc_now()
+    index["artifacts"] = sorted(existing.values(), key=lambda entry: entry["path"])
+    write_json(run_file(root, run_id, "artifacts"), index)
+    return entries
+
+
+def default_cost_latency(run_id: str) -> Dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "updated_at": utc_now(),
+        "step_count": 0,
+        "tool_call_count": 0,
+        "duration_ms_total": 0,
+        "token_usage_input": 0,
+        "token_usage_output": 0,
+        "estimated_cost": 0.0,
+        "tool_error_count": 0,
+        "retry_count": 0,
+    }
+
+
+def update_cost_latency(root: Path, run_id: str, event: Dict[str, Any]) -> Dict[str, Any]:
+    path = run_file(root, run_id, "cost_latency")
+    current = load_json_object(path, "cost latency") if path.exists() else default_cost_latency(run_id)
+    current["updated_at"] = utc_now()
+    current["step_count"] = int(current.get("step_count", 0)) + 1
+    if event.get("tool_name"):
+        current["tool_call_count"] = int(current.get("tool_call_count", 0)) + 1
+    current["duration_ms_total"] = int(current.get("duration_ms_total", 0)) + int(event.get("duration_ms") or 0)
+    current["token_usage_input"] = int(current.get("token_usage_input", 0)) + int(event.get("token_usage_input") or 0)
+    current["token_usage_output"] = int(current.get("token_usage_output", 0)) + int(event.get("token_usage_output") or 0)
+    current["estimated_cost"] = round(float(current.get("estimated_cost", 0.0)) + float(event.get("estimated_cost") or 0.0), 8)
+    if event.get("error_type"):
+        current["tool_error_count"] = int(current.get("tool_error_count", 0)) + 1
+    write_json(path, current)
+    return current
+
+
+def write_handoff(root: Path, run_id: str) -> None:
+    manifest = load_run_manifest(root, run_id)
+    state = load_run_state(root, run_id)
+    cost = load_json_object(run_file(root, run_id, "cost_latency"), "cost latency")
+    artifacts = load_artifact_index(root, run_id)
+    interruptions = load_json_array(run_file(root, run_id, "interruptions"), "interruptions")
+    lines = [
+        f"# SH Handoff - {run_id}",
+        "",
+        f"- goal_id: {manifest.get('goal_id')}",
+        f"- seed_id: {manifest.get('seed_id')}",
+        f"- active_slice: {manifest.get('active_slice')}",
+        f"- current_state: {state.get('current_state')}",
+        f"- iteration: {state.get('iteration')}",
+        f"- updated_at: {state.get('updated_at')}",
+        f"- interruptions: {len(interruptions)}",
+        f"- artifacts: {len(artifacts.get('artifacts', []))}",
+        f"- duration_ms_total: {cost.get('duration_ms_total')}",
+        f"- token_usage_input: {cost.get('token_usage_input')}",
+        f"- token_usage_output: {cost.get('token_usage_output')}",
+        "",
+        "## Resume",
+        "",
+        f"Run `py scripts/sh_runtime.py resume-run --root . --run-id {run_id} --reason \"resume from handoff\"` after checking unresolved blockers.",
+        "",
+        "## Artifact Index",
     ]
-    return [root / ".sh" / name for name in names]
+    for entry in artifacts.get("artifacts", []):
+        if isinstance(entry, dict):
+            lines.append(f"- {entry.get('path')} {entry.get('sha256')}")
+    run_file(root, run_id, "handoff").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def update_replay(root: Path, run_id: str) -> Dict[str, Any]:
+    manifest = load_run_manifest(root, run_id)
+    state = load_run_state(root, run_id)
+    trace = read_jsonl(run_file(root, run_id, "trace"))
+    step_ledger = read_jsonl(run_file(root, run_id, "step_ledger"))
+    replay = {
+        "run_id": run_id,
+        "trace_id": manifest.get("trace_id"),
+        "generated_at": utc_now(),
+        "manifest": RUN_ARTIFACT_FILES["manifest"],
+        "state": state,
+        "steps": [
+            {
+                "step_id": row.get("step_id"),
+                "operation_name": row.get("operation_name"),
+                "tool_name": row.get("tool_name"),
+                "state_before": row.get("state_before"),
+                "state_after": row.get("state_after"),
+                "error_type": row.get("error_type"),
+                "artifact_hashes": row.get("artifact_hashes", []),
+            }
+            for row in trace
+        ],
+        "ledger_events": step_ledger,
+    }
+    write_json(run_file(root, run_id, "replay"), replay)
+    return replay
 
 
 def cmd_init_state(args: argparse.Namespace) -> int:
@@ -250,35 +266,6 @@ def cmd_init_state(args: argparse.Namespace) -> int:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     ledger.touch(exist_ok=True)
     return emit({"ok": True, "root": str(root), "created": [str(p) for p in default_sh_dirs(root)], "ledger": str(ledger)})
-
-
-def is_under(child: Path, parent: Path) -> bool:
-    try:
-        child.resolve().relative_to(parent.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def rel_posix(path: Path, root: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
-
-
-def file_sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return "sha256:" + h.hexdigest()
-
-
-def json_sha256(payload: Any) -> str:
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return "sha256:" + hashlib.sha256(raw).hexdigest()
-
-
-def contains_excluded_part(path: Path, names: Iterable[str]) -> bool:
-    return any(part in set(names) for part in path.parts)
 
 
 def collect_files(
@@ -404,40 +391,6 @@ def build_hash_manifest(root: Path, manifest: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def has_shell_meta(value: str) -> Optional[str]:
-    for pattern in SHELL_META_PATTERNS:
-        if pattern in value:
-            return pattern
-    return None
-
-
-def valid_egress(value: str) -> bool:
-    match = EGRESS_RE.match(value)
-    if not match:
-        return False
-    try:
-        port = int(value.rsplit(":", 1)[1])
-    except ValueError:
-        return False
-    return 1 <= port <= 65535
-
-
-def contract_sha256(contract: Dict[str, Any]) -> str:
-    return json_sha256(contract)
-
-
-def is_safe_relative_path(value: str) -> bool:
-    if not is_non_empty_string(value):
-        return False
-    p = Path(value)
-    if p.is_absolute():
-        return False
-    normalized = value.replace("\\", "/")
-    if normalized.startswith("../") or "/../" in normalized or normalized == "..":
-        return False
-    return True
-
-
 def validate_resume_binding(contract: Dict[str, Any], receipt: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
     findings: List[Dict[str, str]] = []
     if receipt is None:
@@ -546,26 +499,6 @@ def cmd_validate_resume(args: argparse.Namespace) -> int:
     return emit(result, 0 if result["ok"] else 3)
 
 
-def is_non_empty_string(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-def has_evidence(value: Any) -> bool:
-    if is_non_empty_string(value):
-        return True
-    if isinstance(value, list):
-        return any(is_non_empty_string(item) for item in value)
-    return False
-
-
-def evidence_strings(value: Any) -> List[str]:
-    if is_non_empty_string(value):
-        return [value.strip()]
-    if isinstance(value, list):
-        return [item.strip() for item in value if is_non_empty_string(item)]
-    return []
-
-
 def evidence_artifact_path(root: Path, value: str) -> Optional[Path]:
     raw = value.removeprefix("file:").strip()
     if not raw:
@@ -609,6 +542,10 @@ def validate_workflow_artifacts(
         if rel in seen:
             continue
         seen.add(rel)
+        suffix = artifact.suffix.lower()
+        if suffix and suffix not in ALLOWED_EVIDENCE_SUFFIXES:
+            findings.append({"code": "evidence_type_not_allowed", "detail": f"{rel!r} has unsupported evidence type {suffix!r}"})
+            continue
         stat = artifact.stat()
         current_entry = {
             "path": rel,
@@ -631,6 +568,14 @@ def validate_workflow_artifacts(
             findings.append({"code": "evidence_hash_mismatch", "detail": f"{rel!r} content differs from manifest"})
         if manifest_entry.get("size") != current_entry["size"]:
             findings.append({"code": "evidence_size_mismatch", "detail": f"{rel!r} size differs from manifest"})
+        generated_at = evidence_manifest.get("generated_at") if isinstance(evidence_manifest, dict) else None
+        if isinstance(generated_at, str):
+            try:
+                manifest_ts = _dt.datetime.fromisoformat(generated_at.replace("Z", "+00:00")).timestamp()
+                if stat.st_mtime - manifest_ts > 1.0:
+                    findings.append({"code": "evidence_newer_than_manifest", "detail": f"{rel!r} was modified after the evidence manifest was generated"})
+            except ValueError:
+                findings.append({"code": "invalid_manifest_timestamp", "detail": "evidence manifest generated_at is not ISO-8601"})
     current_entries = sorted(current_entries, key=lambda entry: entry["path"])
     return findings, current_entries, json_sha256(current_entries) if current_entries else None
 
@@ -795,7 +740,7 @@ def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
     result = validate_workflow_evidence_contract(
         contract,
         root=root,
-        require_artifacts=args.require_artifacts,
+        require_artifacts=args.require_artifacts or not args.allow_descriptive_evidence,
         evidence_manifest=evidence_manifest,
     )
     if not result["ok"]:
@@ -884,6 +829,801 @@ def default_next_owner(action: str) -> str:
     if action == "abort":
         return "none"
     return "goal-loop"
+
+
+def create_run(
+    root: Path,
+    *,
+    run_id: str,
+    goal_id: str,
+    seed_id: str,
+    active_slice: str,
+    objective: str,
+    vertical: str = "completion-auditor",
+    permission_profile: str = "read_only",
+    reset_existing: bool = False,
+) -> Dict[str, Any]:
+    sanitize_id(run_id, "run_id")
+    if permission_profile not in PERMISSION_PROFILES:
+        raise ShRuntimeError(f"Unknown permission profile: {permission_profile!r}")
+    path = run_path(root, run_id)
+    if path.exists():
+        if not reset_existing:
+            raise ShRuntimeError(f"run already exists: {run_id!r}")
+        runs_root = root.resolve() / ".sh" / "runs"
+        if not is_under(path, runs_root):
+            raise ShRuntimeError(f"refusing to reset run outside .sh/runs: {path}")
+        shutil.rmtree(path)
+    for d in default_sh_dirs(root):
+        d.mkdir(parents=True, exist_ok=True)
+    path.mkdir(parents=True, exist_ok=True)
+    trace_id = new_trace_id()
+    created_at = utc_now()
+    manifest = {
+        "run_id": run_id,
+        "trace_id": trace_id,
+        "goal_id": goal_id,
+        "seed_id": seed_id,
+        "active_slice": active_slice,
+        "objective": objective,
+        "vertical": vertical,
+        "permission_profile": permission_profile,
+        "status": "RUNNING",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "agent_name": AGENT_NAME,
+        "agent_version": AGENT_VERSION,
+        "resource_spec": {
+            "cpu": platform.processor() or platform.machine(),
+            "memory": "unknown",
+            "time_budget_sec": None,
+            "concurrency": 1,
+            "network": "offline-by-default",
+            "seed": run_id,
+            "retries": 0,
+        },
+    }
+    state = {
+        "run_id": run_id,
+        "trace_id": trace_id,
+        "current_state": "RUNNING",
+        "iteration": 0,
+        "resumed_count": 0,
+        "last_step_id": None,
+        "last_span_id": None,
+        "created_at": created_at,
+        "updated_at": created_at,
+    }
+    write_json(run_file(root, run_id, "manifest"), manifest)
+    write_json(run_file(root, run_id, "state"), state)
+    write_json(run_file(root, run_id, "interruptions"), [])
+    write_json(run_file(root, run_id, "artifacts"), {"run_id": run_id, "updated_at": created_at, "artifacts": []})
+    write_json(run_file(root, run_id, "cost_latency"), default_cost_latency(run_id))
+    for key in ("step_ledger", "trace", "tool_calls"):
+        run_file(root, run_id, key).write_text("", encoding="utf-8")
+    start_event = build_trace_event(
+        manifest,
+        state,
+        step_id="run_start",
+        operation_name="run.start",
+        tool_name="sh_runtime.start-run",
+        state_before="RUNNING",
+        state_after="RUNNING",
+        artifact_entries=[],
+        input_text=objective,
+        output_text="run initialized",
+        duration_ms=0,
+    )
+    append_trace_event(root, run_id, start_event)
+    append_jsonl(run_file(root, run_id, "step_ledger"), {"ts": created_at, "event": "run_started", "state": "RUNNING", "step_id": "run_start"})
+    append_ledger_entry(root / ".sh" / "ledger.jsonl", normalize_ledger_entry({"event_type": "goal_created", "run_id": run_id, "goal_id": goal_id, "seed_id": seed_id, "summary": objective}))
+    update_replay(root, run_id)
+    write_handoff(root, run_id)
+    return {"ok": True, "run_id": run_id, "run_dir": str(path), "manifest": manifest}
+
+
+def build_trace_event(
+    manifest: Dict[str, Any],
+    state: Dict[str, Any],
+    *,
+    step_id: str,
+    operation_name: str,
+    tool_name: Optional[str],
+    state_before: str,
+    state_after: str,
+    artifact_entries: List[Dict[str, Any]],
+    input_text: Optional[str] = None,
+    output_text: Optional[str] = None,
+    duration_ms: int = 0,
+    token_usage_input: int = 0,
+    token_usage_output: int = 0,
+    estimated_cost: float = 0.0,
+    error_type: Optional[str] = None,
+    approval_needed: bool = False,
+    approval_result: Optional[str] = None,
+) -> Dict[str, Any]:
+    start_ts = utc_now()
+    end_ts = start_ts
+    span_id = new_span_id()
+    artifact_hashes = [entry.get("sha256") for entry in artifact_entries if isinstance(entry.get("sha256"), str)]
+    return {
+        "event_schema": "sh.trace_event.v1",
+        "trace_id": manifest["trace_id"],
+        "span_id": span_id,
+        "parent_span_id": state.get("last_span_id"),
+        "run_id": manifest["run_id"],
+        "step_id": step_id,
+        "agent_name": manifest.get("agent_name", AGENT_NAME),
+        "agent_version": manifest.get("agent_version", AGENT_VERSION),
+        "conversation_id": manifest.get("conversation_id"),
+        "session_id": manifest.get("session_id"),
+        "operation_name": operation_name,
+        "tool_name": tool_name,
+        "input_hash": stable_hash_text(input_text),
+        "args_hash": stable_hash_text(json.dumps({"operation_name": operation_name, "tool_name": tool_name}, sort_keys=True)),
+        "output_hash": stable_hash_text(output_text),
+        "artifact_hashes": artifact_hashes,
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "duration_ms": int(duration_ms),
+        "token_usage_input": int(token_usage_input),
+        "token_usage_output": int(token_usage_output),
+        "estimated_cost": float(estimated_cost),
+        "error_type": error_type,
+        "state_before": state_before,
+        "state_after": state_after,
+        "approval_needed": bool(approval_needed),
+        "approval_result": approval_result,
+        "semconv": {
+            "gen_ai.operation.name": operation_name,
+            "gen_ai.system": AGENT_NAME,
+            "gen_ai.tool.name": tool_name,
+        },
+    }
+
+
+def append_trace_event(root: Path, run_id: str, event: Dict[str, Any]) -> None:
+    append_jsonl(run_file(root, run_id, "trace"), event)
+    if event.get("tool_name"):
+        append_jsonl(
+            run_file(root, run_id, "tool_calls"),
+            {
+                "trace_id": event.get("trace_id"),
+                "span_id": event.get("span_id"),
+                "run_id": run_id,
+                "step_id": event.get("step_id"),
+                "tool_name": event.get("tool_name"),
+                "input_hash": event.get("input_hash"),
+                "output_hash": event.get("output_hash"),
+                "duration_ms": event.get("duration_ms"),
+                "error_type": event.get("error_type"),
+                "start_ts": event.get("start_ts"),
+                "end_ts": event.get("end_ts"),
+            },
+        )
+    update_cost_latency(root, run_id, event)
+
+
+def record_step(
+    root: Path,
+    *,
+    run_id: str,
+    step_id: str,
+    operation_name: str,
+    tool_name: Optional[str],
+    state_before: str,
+    state_after: str,
+    artifacts: List[str],
+    input_text: Optional[str],
+    output_text: Optional[str],
+    duration_ms: int,
+    token_usage_input: int,
+    token_usage_output: int,
+    estimated_cost: float,
+    error_type: Optional[str],
+    approval_needed: bool,
+    approval_result: Optional[str],
+    event_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    require_run(root, run_id)
+    ensure_state(state_before, "state_before")
+    ensure_state(state_after, "state_after")
+    state = load_run_state(root, run_id)
+    manifest = load_run_manifest(root, run_id)
+    if state.get("current_state") != state_before:
+        raise ShRuntimeError("state_before does not match current run state", payload={"current_state": state.get("current_state"), "state_before": state_before})
+    if state_before != state_after:
+        if not event_name:
+            raise ShRuntimeError(
+                "state-changing record-step requires an explicit state-machine event",
+                payload={"state_before": state_before, "state_after": state_after},
+            )
+        transition = transition_result(state_before, event_name, state_after)
+        if not transition["ok"]:
+            raise ShRuntimeError(
+                "record-step state transition is not allowed",
+                payload={"state_before": state_before, "state_after": state_after, "event": event_name, "transition": transition},
+            )
+    artifact_entries = update_artifact_index(root, run_id, artifacts)
+    event = build_trace_event(
+        manifest,
+        state,
+        step_id=step_id,
+        operation_name=operation_name,
+        tool_name=tool_name,
+        state_before=state_before,
+        state_after=state_after,
+        artifact_entries=artifact_entries,
+        input_text=input_text,
+        output_text=output_text,
+        duration_ms=duration_ms,
+        token_usage_input=token_usage_input,
+        token_usage_output=token_usage_output,
+        estimated_cost=estimated_cost,
+        error_type=error_type,
+        approval_needed=approval_needed,
+        approval_result=approval_result,
+    )
+    append_trace_event(root, run_id, event)
+    append_jsonl(
+        run_file(root, run_id, "step_ledger"),
+        {
+            "ts": utc_now(),
+            "event": "step_recorded",
+            "step_id": step_id,
+            "operation_name": operation_name,
+            "tool_name": tool_name,
+            "state_before": state_before,
+            "state_after": state_after,
+            "event_name": event_name,
+            "error_type": error_type,
+            "artifact_count": len(artifact_entries),
+        },
+    )
+    state["current_state"] = state_after
+    state["iteration"] = int(state.get("iteration", 0)) + 1
+    state["last_step_id"] = step_id
+    state["last_span_id"] = event["span_id"]
+    write_run_state(root, run_id, state)
+    manifest["status"] = state_after
+    manifest["updated_at"] = utc_now()
+    write_json(run_file(root, run_id, "manifest"), manifest)
+    update_replay(root, run_id)
+    write_handoff(root, run_id)
+    return {"ok": True, "run_id": run_id, "step_id": step_id, "trace_event": event}
+
+
+def cmd_start_run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    run_id = args.run_id or ("run_" + uuid.uuid4().hex[:12])
+    result = create_run(
+        root,
+        run_id=run_id,
+        goal_id=args.goal_id,
+        seed_id=args.seed_id,
+        active_slice=args.active_slice,
+        objective=args.objective,
+        vertical=args.vertical,
+        permission_profile=args.permission_profile,
+        reset_existing=args.reset_existing,
+    )
+    return emit(result)
+
+
+def cmd_record_step(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    result = record_step(
+        root,
+        run_id=args.run_id,
+        step_id=args.step_id,
+        operation_name=args.operation_name,
+        tool_name=args.tool_name,
+        state_before=args.state_before,
+        state_after=args.state_after,
+        artifacts=args.artifact or [],
+        input_text=args.input,
+        output_text=args.output,
+        duration_ms=safe_optional_int(args.duration_ms),
+        token_usage_input=safe_optional_int(args.token_usage_input),
+        token_usage_output=safe_optional_int(args.token_usage_output),
+        estimated_cost=safe_optional_float(args.estimated_cost),
+        error_type=args.error_type,
+        approval_needed=args.approval_needed,
+        approval_result=args.approval_result,
+        event_name=args.event,
+    )
+    return emit(result)
+
+
+def interruption_event_for_kind(kind: str) -> str:
+    if kind == "blocked":
+        return "oracle_blocked"
+    if kind == "abort":
+        return "critical_risk"
+    return "redteam_no_progress"
+
+
+def cmd_record_interruption(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    require_run(root, args.run_id)
+    state = load_run_state(root, args.run_id)
+    current_state = state.get("current_state")
+    event_name = args.event or interruption_event_for_kind(args.kind)
+    transition = transition_result(current_state, event_name)
+    if not transition["ok"]:
+        transition["error"] = "transition_not_allowed"
+        return emit(transition, 2)
+    interruptions = load_json_array(run_file(root, args.run_id, "interruptions"), "interruptions")
+    interruption = {
+        "id": "int_" + uuid.uuid4().hex[:12],
+        "kind": args.kind,
+        "reason": args.reason,
+        "event": event_name,
+        "state_before": current_state,
+        "state_after": transition["expected_to_state"],
+        "timestamp": utc_now(),
+        "approval_needed": args.approval_needed,
+    }
+    interruptions.append(interruption)
+    write_json(run_file(root, args.run_id, "interruptions"), interruptions)
+    record_step(
+        root,
+        run_id=args.run_id,
+        step_id=interruption["id"],
+        operation_name="run.interruption",
+        tool_name="sh_runtime.record-interruption",
+        state_before=current_state,
+        state_after=transition["expected_to_state"],
+        artifacts=[],
+        input_text=args.reason,
+        output_text=args.kind,
+        duration_ms=0,
+        token_usage_input=0,
+        token_usage_output=0,
+        estimated_cost=0.0,
+        error_type=None,
+        approval_needed=args.approval_needed,
+        approval_result=None,
+        event_name=event_name,
+    )
+    return emit({"ok": True, "run_id": args.run_id, "interruption": interruption})
+
+
+def default_resume_event(current_state: str) -> str:
+    if current_state == "BLOCKED":
+        return "rehydration_pass"
+    if current_state == "PAUSED":
+        return "unstuck_accepted"
+    if current_state == "RECOVERY":
+        return "recovery_validated"
+    return "seed_update_accepted"
+
+
+def cmd_resume_run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    require_run(root, args.run_id)
+    state = load_run_state(root, args.run_id)
+    current_state = state.get("current_state")
+    if current_state in TERMINAL_STATES:
+        raise ShRuntimeError("terminal run cannot be resumed", payload={"current_state": current_state})
+    event_name = args.event or default_resume_event(current_state)
+    if current_state == "RUNNING":
+        next_state = "RUNNING"
+        transition = {"ok": True, "expected_to_state": "RUNNING", "event": "already_running"}
+    else:
+        transition = transition_result(current_state, event_name)
+        if not transition["ok"]:
+            transition["error"] = "transition_not_allowed"
+            return emit(transition, 2)
+        next_state = transition["expected_to_state"]
+    state["resumed_count"] = int(state.get("resumed_count", 0)) + 1
+    write_run_state(root, args.run_id, state)
+    result = record_step(
+        root,
+        run_id=args.run_id,
+        step_id="resume_" + uuid.uuid4().hex[:8],
+        operation_name="run.resume",
+        tool_name="sh_runtime.resume-run",
+        state_before=current_state,
+        state_after=next_state,
+        artifacts=[],
+        input_text=args.reason,
+        output_text=event_name,
+        duration_ms=0,
+        token_usage_input=0,
+        token_usage_output=0,
+        estimated_cost=0.0,
+        error_type=None,
+        approval_needed=False,
+        approval_result=None,
+        event_name=event_name if current_state != "RUNNING" else None,
+    )
+    append_ledger_entry(root / ".sh" / "ledger.jsonl", normalize_ledger_entry({"event_type": "recovery", "run_id": args.run_id, "summary": args.reason or "resume", "from_state": current_state, "to_state": next_state}))
+    return emit({"ok": True, "run_id": args.run_id, "transition": transition, "trace_event": result["trace_event"]})
+
+
+def cmd_replay_run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    require_run(root, args.run_id)
+    replay = update_replay(root, args.run_id) if args.refresh else load_json_object(run_file(root, args.run_id, "replay"), "replay")
+    trace = read_jsonl(run_file(root, args.run_id, "trace"))
+    tool_calls = read_jsonl(run_file(root, args.run_id, "tool_calls"))
+    cost = load_json_object(run_file(root, args.run_id, "cost_latency"), "cost latency")
+    summary = {
+        "ok": True,
+        "run_id": args.run_id,
+        "trace_id": replay.get("trace_id"),
+        "state": replay.get("state", {}).get("current_state"),
+        "step_count": len(trace),
+        "tool_call_count": len(tool_calls),
+        "duration_ms_total": cost.get("duration_ms_total", 0),
+        "estimated_cost": cost.get("estimated_cost", 0.0),
+        "error_count": len([row for row in trace if row.get("error_type")]),
+        "steps": replay.get("steps", []),
+    }
+    return emit(summary)
+
+
+def validate_json_schema_files(root: Path) -> Dict[str, Any]:
+    schema_dir = root / "schemas"
+    findings: List[Dict[str, str]] = []
+    if not schema_dir.exists():
+        findings.append({"code": "missing_schema_dir", "detail": "schemas/ does not exist"})
+        return {"ok": False, "findings": findings}
+    for filename in sorted(EXPECTED_SCHEMA_FILES):
+        path = schema_dir / filename
+        if not path.exists():
+            findings.append({"code": "missing_schema_file", "detail": filename})
+            continue
+        payload = load_json(path)
+        if not isinstance(payload, dict):
+            findings.append({"code": "schema_not_object", "detail": filename})
+            continue
+        if filename.endswith(".schema.json") and payload.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+            findings.append({"code": "invalid_schema_dialect", "detail": filename})
+    tool_contracts_path = schema_dir / "tool_contracts.json"
+    if tool_contracts_path.exists():
+        tool_contracts_schema = load_json_object(schema_dir / "tool_contracts.schema.json", "tool contracts schema")
+        contracts = load_json_object(tool_contracts_path, "tool contracts")
+        findings.extend(validate_against_schema(contracts, tool_contracts_schema, "$.tool_contracts"))
+        tools = contracts.get("tools")
+        if not isinstance(tools, list):
+            findings.append({"code": "invalid_tool_contracts", "detail": "tools must be a list"})
+        else:
+            names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+            missing = sorted(EXPECTED_TOOL_CONTRACTS - names)
+            if missing:
+                findings.append({"code": "missing_tool_contracts", "detail": ",".join(missing)})
+            for tool in tools:
+                if not isinstance(tool, dict):
+                    findings.append({"code": "invalid_tool_contract", "detail": "tool entry must be object"})
+                    continue
+                for key in ("name", "description", "inputSchema", "outputSchema", "exit_codes", "retryability", "timeout_sec", "side_effect_class", "approval_required", "emitted_artifacts", "failure_modes"):
+                    if key not in tool:
+                        findings.append({"code": "tool_contract_missing_key", "detail": f"{tool.get('name', '<unknown>')} missing {key}"})
+    taxonomy_path = schema_dir / "failure_taxonomy.json"
+    if taxonomy_path.exists():
+        taxonomy_schema = load_json_object(schema_dir / "failure_taxonomy.schema.json", "failure taxonomy schema")
+        taxonomy = load_json_object(taxonomy_path, "failure taxonomy")
+        findings.extend(validate_against_schema(taxonomy, taxonomy_schema, "$.failure_taxonomy"))
+        failure_types = taxonomy.get("failure_types")
+        if not isinstance(failure_types, list):
+            findings.append({"code": "invalid_failure_taxonomy", "detail": "failure_types must be a list"})
+        else:
+            codes = set()
+            for item in failure_types:
+                if not isinstance(item, dict):
+                    findings.append({"code": "invalid_failure_type", "detail": "failure type must be object"})
+                    continue
+                for key in ("code", "severity", "retriable", "recovery_action", "owner", "evidence_required", "user_visible_message"):
+                    if key not in item:
+                        findings.append({"code": "failure_type_missing_key", "detail": f"{item.get('code', '<unknown>')} missing {key}"})
+                codes.add(item.get("code"))
+            missing_codes = sorted(FAILURE_CODES - codes)
+            if missing_codes:
+                findings.append({"code": "missing_failure_codes", "detail": ",".join(missing_codes)})
+    policy_path = root / "security" / "policy.json"
+    policy_schema_path = schema_dir / "security_policy.schema.json"
+    if policy_path.exists() and policy_schema_path.exists():
+        policy_schema = load_json_object(policy_schema_path, "security policy schema")
+        policy = load_json_object(policy_path, "security policy")
+        findings.extend(validate_against_schema(policy, policy_schema, "$.security_policy"))
+    return {"ok": not findings, "findings": findings}
+
+
+def validate_eval_task(task: Dict[str, Any], index: int, root: Optional[Path] = None, schema: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+    findings: List[Dict[str, str]] = []
+    if schema is not None:
+        findings.extend(validate_against_schema(task, schema, f"$.eval_task[{index}]"))
+    for key in ("id", "title", "vertical", "input", "expected_artifacts", "grader_config", "resource_spec", "trial_count", "seed_policy"):
+        if key not in task:
+            findings.append({"code": "eval_task_missing_key", "detail": f"task[{index}] missing {key}"})
+    if "trial_count" in task and (not isinstance(task.get("trial_count"), int) or int(task.get("trial_count")) < 1):
+        findings.append({"code": "invalid_trial_count", "detail": f"task[{index}].trial_count must be >=1"})
+    if task.get("vertical") != "AI coding-agent completion auditor":
+        findings.append({"code": "invalid_vertical", "detail": f"task[{index}] is outside the selected vertical"})
+    expected_artifacts = task.get("expected_artifacts")
+    if not isinstance(expected_artifacts, list) or not expected_artifacts:
+        findings.append({"code": "invalid_expected_artifacts", "detail": f"task[{index}].expected_artifacts must be a non-empty list"})
+    elif root is not None:
+        for artifact in expected_artifacts:
+            if not is_non_empty_string(artifact):
+                findings.append({"code": "invalid_expected_artifact", "detail": f"task[{index}] expected_artifacts may contain only non-empty strings"})
+                continue
+            path = (root / artifact).resolve()
+            if not is_under(path, root) or not path.is_file():
+                findings.append({"code": "expected_artifact_missing", "detail": f"task[{index}] expected artifact is missing: {artifact!r}"})
+    return findings
+
+
+def validate_eval_files(root: Path) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    task_count = 0
+    eval_schema = load_json_object(root / "schemas" / "eval_task.schema.json", "eval task schema")
+    for rel in ("evals/benchmark_tasks.jsonl", "evals/regression_tasks.jsonl"):
+        path = root / rel
+        if not path.exists():
+            findings.append({"code": "missing_eval_suite", "detail": rel})
+            continue
+        rows = read_jsonl(path)
+        if rel.endswith("benchmark_tasks.jsonl"):
+            task_count = len(rows)
+            if len(rows) < 20:
+                findings.append({"code": "benchmark_task_count_low", "detail": f"expected at least 20 tasks, got {len(rows)}"})
+        for index, task in enumerate(rows):
+            findings.extend(validate_eval_task(task, index, root=root, schema=eval_schema))
+    return {"ok": not findings, "benchmark_task_count": task_count, "findings": findings}
+
+
+def cmd_validate_schemas(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    schema_result = validate_json_schema_files(root)
+    eval_result = validate_eval_files(root)
+    policy_path = root / "security" / "policy.json"
+    policy_ok = policy_path.exists() and isinstance(load_json(policy_path), dict)
+    result = {
+        "ok": schema_result["ok"] and eval_result["ok"] and policy_ok,
+        "schemas": schema_result,
+        "evals": eval_result,
+        "security_policy_present": policy_ok,
+    }
+    return emit(result, 0 if result["ok"] else 2)
+
+
+def validate_policy_action(root: Path, policy: Dict[str, Any], action: Dict[str, Any]) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    profile_name = action.get("permission_profile")
+    profiles = policy.get("profiles", {})
+    profile = profiles.get(profile_name) if isinstance(profiles, dict) else None
+    if profile_name not in PERMISSION_PROFILES or not isinstance(profile, dict):
+        findings.append({"code": "PERMISSION_DENIED", "detail": f"unknown permission profile {profile_name!r}"})
+        profile = {}
+    approval = action.get("approval", {}) if isinstance(action.get("approval"), dict) else {}
+    approval_required = False
+    fs = action.get("filesystem", {}) if isinstance(action.get("filesystem"), dict) else {}
+    writes = fs.get("writes", [])
+    if writes and profile_name == "read_only":
+        approval_required = True
+        findings.append({"code": "PERMISSION_DENIED", "detail": "read_only profile cannot write"})
+    profile_fs = profile.get("filesystem", {}) if isinstance(profile.get("filesystem"), dict) else {}
+    allowed_write_roots = profile_fs.get("write", [])
+    for raw in writes if isinstance(writes, list) else []:
+        p = (root / str(raw)).resolve()
+        if not is_under(p, root):
+            approval_required = True
+            findings.append({"code": "UNSAFE_ACTION", "detail": f"write escapes workspace: {raw}"})
+            continue
+        if profile_name != "danger_full_access":
+            allowed = False
+            for allowed_raw in allowed_write_roots if isinstance(allowed_write_roots, list) else []:
+                allowed_path = (root / str(allowed_raw)).resolve()
+                if is_under(p, allowed_path):
+                    allowed = True
+                    break
+            if not allowed:
+                approval_required = True
+                findings.append({"code": "PERMISSION_DENIED", "detail": f"write is outside profile allowlist: {raw}"})
+    if fs.get("destructive") is True:
+        approval_required = True
+        findings.append({"code": "UNSAFE_ACTION", "detail": "destructive action requires approval"})
+    network = action.get("network", {}) if isinstance(action.get("network"), dict) else {}
+    domains = network.get("domains", [])
+    allowed_domains = set(profile.get("network_allowlist", []))
+    if domains:
+        if profile_name not in {"scoped_network", "danger_full_access"}:
+            approval_required = True
+            findings.append({"code": "PERMISSION_DENIED", "detail": f"{profile_name} profile cannot use network"})
+        for domain in domains if isinstance(domains, list) else []:
+            if profile_name == "scoped_network" and domain not in allowed_domains:
+                approval_required = True
+                findings.append({"code": "PERMISSION_DENIED", "detail": f"network domain not allowlisted: {domain}"})
+    command = action.get("command", {}) if isinstance(action.get("command"), dict) else {}
+    argv = command.get("argv", [])
+    if command.get("shell") is True:
+        approval_required = True
+        findings.append({"code": "UNSAFE_ACTION", "detail": "shell=true requires approval"})
+    for item in argv if isinstance(argv, list) else []:
+        meta = has_shell_meta(str(item))
+        if meta:
+            approval_required = True
+            findings.append({"code": "UNSAFE_ACTION", "detail": f"shell metacharacter {meta!r} requires approval"})
+    approval_result = approval.get("result")
+    approval_satisfied = approval_required and approval_result == "approved"
+    ok = not findings or approval_satisfied
+    return {
+        "ok": ok,
+        "approval_required": approval_required,
+        "approval_result": approval_result,
+        "failure_findings": findings if not approval_satisfied else [],
+        "raw_findings": findings,
+        "recommended_state": "RUNNING" if ok else "BLOCKED",
+    }
+
+
+def cmd_validate_policy(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    policy = load_json_object(Path(args.policy).resolve(), "security policy")
+    action = load_json_object(Path(args.action_file).resolve(), "policy action")
+    result = validate_policy_action(root, policy, action)
+    if args.write_approval_log:
+        approval_dir = root / ".sh" / "approvals"
+        approval_dir.mkdir(parents=True, exist_ok=True)
+        approval_id = action.get("approval", {}).get("id") if isinstance(action.get("approval"), dict) else None
+        approval_id = approval_id if is_non_empty_string(approval_id) and SAFE_ID_RE.match(approval_id) else "approval_" + uuid.uuid4().hex[:12]
+        write_json(
+            approval_dir / f"{approval_id}.json",
+            {
+                "request": action,
+                "reviewer": action.get("approval", {}).get("reviewer") if isinstance(action.get("approval"), dict) else None,
+                "result": result,
+                "timestamp": utc_now(),
+                "reason": action.get("approval", {}).get("reason") if isinstance(action.get("approval"), dict) else None,
+            },
+        )
+        result["approval_log"] = str(approval_dir / f"{approval_id}.json")
+    return emit(result, 0 if result["ok"] else 7)
+
+
+def eval_validator_result(root: Path, task: Dict[str, Any]) -> Dict[str, Any]:
+    fixture = task.get("fixture", {}) if isinstance(task.get("fixture"), dict) else {}
+    validator = fixture.get("validator") if isinstance(fixture.get("validator"), dict) else None
+    if validator is None:
+        return {"ok": True, "type": "none"}
+    validator_type = validator.get("type")
+    if validator_type == "workflow_evidence":
+        evidence_path = (root / str(validator.get("path", ""))).resolve()
+        contract = load_json_object(evidence_path, "workflow evidence fixture")
+        manifest = None
+        if is_non_empty_string(validator.get("evidence_manifest")):
+            manifest = load_json_object((root / str(validator["evidence_manifest"])).resolve(), "evidence manifest fixture")
+        result = validate_workflow_evidence_contract(
+            contract,
+            root=root,
+            require_artifacts=validator.get("require_artifacts", True) is not False,
+            evidence_manifest=manifest,
+        )
+        expected = validator.get("expected_completion_allowed")
+        return {
+            "ok": expected is None or bool(result["completion_allowed"]) == bool(expected),
+            "type": validator_type,
+            "result": result,
+        }
+    if validator_type == "policy":
+        policy = load_json_object(root / "security" / "policy.json", "security policy")
+        action = load_json_object((root / str(validator.get("path", ""))).resolve(), "policy action fixture")
+        result = validate_policy_action(root, policy, action)
+        expected = validator.get("expected_ok")
+        return {"ok": expected is None or bool(result["ok"]) == bool(expected), "type": validator_type, "result": result}
+    if validator_type == "resume_contract":
+        contract = load_json_object((root / str(validator.get("path", ""))).resolve(), "resume contract fixture")
+        result = validate_resume_contract(contract)
+        expected = validator.get("expected_ok")
+        expected_status = validator.get("expected_status")
+        ok = expected is None or bool(result["ok"]) == bool(expected)
+        if expected_status is not None:
+            ok = ok and result.get("status") == expected_status
+        return {"ok": ok, "type": validator_type, "result": result}
+    return {"ok": False, "type": validator_type, "error": "unknown eval validator type"}
+
+
+def grade_eval_task(root: Path, task: Dict[str, Any], trial_index: int) -> Dict[str, Any]:
+    fixture = task.get("fixture", {}) if isinstance(task.get("fixture"), dict) else {}
+    grader = task.get("grader_config", {}) if isinstance(task.get("grader_config"), dict) else {}
+    outcome = grader.get("outcome_grader", {}) if isinstance(grader.get("outcome_grader"), dict) else {}
+    behavior = grader.get("transcript_behavior_grader", {}) if isinstance(grader.get("transcript_behavior_grader"), dict) else {}
+    observed_outcome = fixture.get("observed_outcome")
+    required_detection = behavior.get("must_detect")
+    signals = set(fixture.get("signals", [])) if isinstance(fixture.get("signals"), list) else set()
+    outcome_pass = observed_outcome == outcome.get("expected_outcome")
+    behavior_pass = required_detection is None or required_detection in signals
+    validator = eval_validator_result(root, task)
+    return {
+        "task_id": task.get("id"),
+        "trial_index": trial_index,
+        "passed": bool(outcome_pass and behavior_pass and validator["ok"]),
+        "outcome_pass": bool(outcome_pass),
+        "behavior_pass": bool(behavior_pass),
+        "validator_pass": bool(validator["ok"]),
+        "validator_type": validator.get("type"),
+        "failure_code": fixture.get("failure_code"),
+        "duration_ms": int(fixture.get("duration_ms", 100)),
+        "estimated_cost": float(fixture.get("estimated_cost", 0.0)),
+        "retries": int(fixture.get("retries", 0)),
+        "tool_errors": int(fixture.get("tool_errors", 0)),
+    }
+
+
+def cmd_run_evals(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    suite_path = Path(args.suite).resolve()
+    rows = read_jsonl(suite_path)
+    if len(rows) < 20 and suite_path.name == "benchmark_tasks.jsonl":
+        raise ShRuntimeError("benchmark suite must include at least 20 tasks")
+    eval_run_id = args.eval_run_id or ("eval_" + uuid.uuid4().hex[:12])
+    sanitize_id(eval_run_id, "eval_run_id")
+    out_dir = root / ".sh" / "evals" / eval_run_id
+    if out_dir.exists():
+        if not args.reset_existing:
+            raise ShRuntimeError(f"eval run already exists: {eval_run_id!r}")
+        if not is_under(out_dir, root / ".sh" / "evals"):
+            raise ShRuntimeError("eval output escapes .sh/evals")
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    trial_results: List[Dict[str, Any]] = []
+    eval_schema = load_json_object(root / "schemas" / "eval_task.schema.json", "eval task schema") if (root / "schemas" / "eval_task.schema.json").exists() else None
+    for task_index, task in enumerate(rows):
+        findings = validate_eval_task(task, task_index, root=root, schema=eval_schema)
+        if findings:
+            trial_results.append({"task_id": task.get("id"), "passed": False, "infra_findings": findings, "failure_code": "BENCHMARK_INFRA_FAILURE"})
+            continue
+        trial_count = max(int(args.trials), int(task.get("trial_count", 1)))
+        for trial_index in range(1, trial_count + 1):
+            trial_results.append(grade_eval_task(root, task, trial_index))
+    total = len(trial_results)
+    passed = len([row for row in trial_results if row.get("passed")])
+    duration_total = sum(int(row.get("duration_ms", 0)) for row in trial_results)
+    cost_total = round(sum(float(row.get("estimated_cost", 0.0)) for row in trial_results), 8)
+    retries_total = sum(int(row.get("retries", 0)) for row in trial_results)
+    tool_errors_total = sum(int(row.get("tool_errors", 0)) for row in trial_results)
+    result = {
+        "ok": passed == total and total > 0,
+        "eval_run_id": eval_run_id,
+        "suite": rel_posix(suite_path, root) if is_under(suite_path, root) else str(suite_path),
+        "generated_at": utc_now(),
+        "resource_spec": load_json_object(root / "evals" / "resource_spec.json", "resource spec") if (root / "evals" / "resource_spec.json").exists() else {},
+        "task_count": len(rows),
+        "trial_count": total,
+        "passed": passed,
+        "failed": total - passed,
+        "pass_rate": round(passed / total, 4) if total else 0.0,
+        "duration_ms_total": duration_total,
+        "estimated_cost_total": cost_total,
+        "retries_total": retries_total,
+        "tool_error_rate": round(tool_errors_total / total, 4) if total else 0.0,
+        "trial_results": trial_results,
+    }
+    write_json(out_dir / "eval_result.json", result)
+    review_lines = [
+        f"# Transcript Review - {eval_run_id}",
+        "",
+        f"- suite: {result['suite']}",
+        f"- pass_rate: {result['pass_rate']}",
+        f"- failed: {result['failed']}",
+        "",
+        "## Failed Trials",
+    ]
+    for row in trial_results:
+        if not row.get("passed"):
+            review_lines.append(f"- {row.get('task_id')} trial={row.get('trial_index')} failure={row.get('failure_code') or row.get('infra_findings')}")
+    (out_dir / "transcript_review.md").write_text("\n".join(review_lines) + "\n", encoding="utf-8")
+    return emit(
+        {
+            "ok": result["ok"],
+            "eval_result": str(out_dir / "eval_result.json"),
+            "summary": {k: result[k] for k in ("task_count", "trial_count", "pass_rate", "duration_ms_total", "estimated_cost_total", "retries_total", "tool_error_rate")},
+        },
+        0 if result["ok"] else 8,
+    )
 
 
 def cmd_append_ledger(args: argparse.Namespace) -> int:
@@ -1179,6 +1919,161 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         write_json(entry_path, {"event_type": "oracle", "summary": "self-test"})
         append_ledger_entry(ledger, normalize_ledger_entry(load_json(entry_path)))
         assert verify_ledger(ledger)["ok"]
+        run_result = create_run(
+            root,
+            run_id="run_smoke",
+            goal_id="goal_1",
+            seed_id="seed_1",
+            active_slice="slice_1",
+            objective="Verify durable runtime smoke path.",
+            reset_existing=False,
+        )
+        assert run_result["ok"]
+        step_result = record_step(
+            root,
+            run_id="run_smoke",
+            step_id="step_1",
+            operation_name="inspect",
+            tool_name="rg",
+            state_before="RUNNING",
+            state_after="RUNNING",
+            artifacts=["src/app.txt"],
+            input_text="inspect repo",
+            output_text="found app",
+            duration_ms=7,
+            token_usage_input=11,
+            token_usage_output=13,
+            estimated_cost=0.001,
+            error_type=None,
+            approval_needed=False,
+            approval_result=None,
+        )
+        assert step_result["ok"]
+        pause_transition = transition_result("RUNNING", "redteam_no_progress")
+        assert pause_transition["ok"]
+        interruptions = load_json_array(run_file(root, "run_smoke", "interruptions"), "interruptions")
+        interruptions.append({"id": "int_smoke", "kind": "pause", "reason": "smoke pause", "timestamp": utc_now()})
+        write_json(run_file(root, "run_smoke", "interruptions"), interruptions)
+        record_step(
+            root,
+            run_id="run_smoke",
+            step_id="int_smoke",
+            operation_name="run.interruption",
+            tool_name="sh_runtime.record-interruption",
+            state_before="RUNNING",
+            state_after="PAUSED",
+            artifacts=[],
+            input_text="smoke pause",
+            output_text="pause",
+            duration_ms=0,
+            token_usage_input=0,
+            token_usage_output=0,
+            estimated_cost=0.0,
+            error_type=None,
+            approval_needed=False,
+            approval_result=None,
+            event_name="redteam_no_progress",
+        )
+        resume_transition = transition_result("PAUSED", "unstuck_accepted")
+        assert resume_transition["ok"]
+        record_step(
+            root,
+            run_id="run_smoke",
+            step_id="resume_smoke",
+            operation_name="run.resume",
+            tool_name="sh_runtime.resume-run",
+            state_before="PAUSED",
+            state_after="RUNNING",
+            artifacts=[],
+            input_text="smoke resume",
+            output_text="unstuck_accepted",
+            duration_ms=0,
+            token_usage_input=0,
+            token_usage_output=0,
+            estimated_cost=0.0,
+            error_type=None,
+            approval_needed=False,
+            approval_result=None,
+            event_name="unstuck_accepted",
+        )
+        replay = update_replay(root, "run_smoke")
+        assert replay["state"]["current_state"] == "RUNNING"
+        assert (root / ".sh" / "runs" / "run_smoke" / "trace.jsonl").exists()
+        assert (root / ".sh" / "runs" / "run_smoke" / "tool_calls.jsonl").exists()
+
+        policy = {
+            "profiles": {
+                "read_only": {"network_allowlist": []},
+                "workspace_write": {"network_allowlist": []},
+                "scoped_network": {"network_allowlist": ["api.example.com"]},
+                "danger_full_access": {"network_allowlist": ["*"]},
+            }
+        }
+        assert validate_policy_action(root, policy, {"permission_profile": "read_only", "filesystem": {"writes": []}, "network": {"domains": []}, "command": {"argv": ["python", "--version"], "shell": False}})["ok"]
+        unsafe_policy = validate_policy_action(root, policy, {"permission_profile": "read_only", "filesystem": {"writes": ["README.md"]}, "network": {"domains": []}, "command": {"argv": ["python", "--version"], "shell": False}, "approval": {"result": "denied"}})
+        assert not unsafe_policy["ok"]
+
+        evals_dir = root / "evals"
+        evals_dir.mkdir()
+        write_json(evals_dir / "resource_spec.json", {"cpu": "test", "memory": "test", "time_budget_sec": 60, "concurrency": 1, "network": "offline", "seed": "self-test", "retries": 0})
+        task = {
+            "id": "bench_001",
+            "title": "Detect evidence-less completion",
+            "vertical": "AI coding-agent completion auditor",
+            "input": "Agent claims done without artifacts.",
+            "expected_artifacts": ["evals/resource_spec.json"],
+            "grader_config": {
+                "outcome_grader": {"type": "outcome", "expected_outcome": "invalid_evidence_detected"},
+                "transcript_behavior_grader": {"type": "transcript", "must_detect": "evidence_less_completion"},
+            },
+            "resource_spec": {"time_budget_sec": 60, "concurrency": 1, "network": "offline"},
+            "trial_count": 3,
+            "seed_policy": {"mode": "fixed", "seed": "bench_001"},
+            "fixture": {
+                "observed_outcome": "invalid_evidence_detected",
+                "signals": ["evidence_less_completion"],
+                "failure_code": "INVALID_EVIDENCE",
+                "duration_ms": 10,
+                "estimated_cost": 0.0,
+                "retries": 0,
+                "tool_errors": 0,
+            },
+        }
+        with (evals_dir / "benchmark_tasks.jsonl").open("w", encoding="utf-8") as f:
+            for i in range(20):
+                row = dict(task)
+                row["id"] = f"bench_{i + 1:03d}"
+                row["seed_policy"] = {"mode": "fixed", "seed": row["id"]}
+                f.write(json.dumps(row, sort_keys=True) + "\n")
+        loaded_tasks = read_jsonl(evals_dir / "benchmark_tasks.jsonl")
+        assert len(loaded_tasks) == 20
+        assert not validate_eval_task(loaded_tasks[0], 0, root=root)
+        trial_results = [grade_eval_task(root, row, trial) for row in loaded_tasks for trial in range(1, 4)]
+        assert len(trial_results) == 60
+        assert all(row["passed"] for row in trial_results)
+        try:
+            record_step(
+                root,
+                run_id="run_smoke",
+                step_id="bypass_complete",
+                operation_name="bypass",
+                tool_name=None,
+                state_before="RUNNING",
+                state_after="COMPLETE",
+                artifacts=[],
+                input_text=None,
+                output_text=None,
+                duration_ms=0,
+                token_usage_input=0,
+                token_usage_output=0,
+                estimated_cost=0.0,
+                error_type=None,
+                approval_needed=False,
+                approval_result=None,
+            )
+            raise AssertionError("state-changing record-step without event was accepted")
+        except ShRuntimeError:
+            pass
         try:
             normalize_ledger_entry({"event_type": "gap_fill", "prev_hash": "sha256:attacker-controlled"})
             raise AssertionError("reserved prev_hash was accepted")
@@ -1220,6 +2115,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence", required=True)
     p.add_argument("--root")
     p.add_argument("--require-artifacts", action="store_true")
+    p.add_argument("--allow-descriptive-evidence", action="store_true", help="Legacy/low-risk mode: allow descriptive evidence strings instead of artifact-backed evidence")
     p.add_argument("--evidence-manifest", help="hash-manifest output whose evidence_assets must include evidence artifacts")
     p.set_defaults(func=cmd_validate_workflow_evidence)
 
@@ -1250,6 +2146,80 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("verify-ledger", help="Verify .sh/ledger.jsonl hash-chain integrity")
     p.add_argument("--root", default=".")
     p.set_defaults(func=cmd_verify_ledger)
+
+    p = sub.add_parser("start-run", help="Start a durable SH run and create run artifacts")
+    p.add_argument("--root", default=".")
+    p.add_argument("--run-id")
+    p.add_argument("--goal-id", required=True)
+    p.add_argument("--seed-id", required=True)
+    p.add_argument("--active-slice", required=True)
+    p.add_argument("--objective", required=True)
+    p.add_argument("--vertical", default="completion-auditor")
+    p.add_argument("--permission-profile", default="read_only", choices=sorted(PERMISSION_PROFILES))
+    p.add_argument("--reset-existing", action="store_true")
+    p.set_defaults(func=cmd_start_run)
+
+    p = sub.add_parser("record-step", help="Record a trace-backed step in an existing run")
+    p.add_argument("--root", default=".")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--step-id", required=True)
+    p.add_argument("--operation-name", required=True)
+    p.add_argument("--tool-name")
+    p.add_argument("--state-before", required=True)
+    p.add_argument("--state-after", required=True)
+    p.add_argument("--event", help="Required when state-before and state-after differ; must match the canonical transition map")
+    p.add_argument("--artifact", action="append")
+    p.add_argument("--input")
+    p.add_argument("--output")
+    p.add_argument("--duration-ms", type=int)
+    p.add_argument("--token-usage-input", type=int)
+    p.add_argument("--token-usage-output", type=int)
+    p.add_argument("--estimated-cost", type=float)
+    p.add_argument("--error-type")
+    p.add_argument("--approval-needed", action="store_true")
+    p.add_argument("--approval-result")
+    p.set_defaults(func=cmd_record_step)
+
+    p = sub.add_parser("record-interruption", help="Record pause/blocked/approval interruption and state transition")
+    p.add_argument("--root", default=".")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--kind", required=True, choices=["pause", "blocked", "approval", "review", "abort"])
+    p.add_argument("--reason", required=True)
+    p.add_argument("--event")
+    p.add_argument("--approval-needed", action="store_true")
+    p.set_defaults(func=cmd_record_interruption)
+
+    p = sub.add_parser("resume-run", help="Resume a paused or blocked run with the same run_id")
+    p.add_argument("--root", default=".")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--reason")
+    p.add_argument("--event")
+    p.set_defaults(func=cmd_resume_run)
+
+    p = sub.add_parser("replay-run", help="Reconstruct a run summary from trace and replay artifacts")
+    p.add_argument("--root", default=".")
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--refresh", action="store_true")
+    p.set_defaults(func=cmd_replay_run)
+
+    p = sub.add_parser("validate-schemas", help="Validate repo-local schemas, tool contracts, taxonomy, and eval task files")
+    p.add_argument("--root", default=".")
+    p.set_defaults(func=cmd_validate_schemas)
+
+    p = sub.add_parser("validate-policy", help="Validate a proposed action against SH permission/network policy")
+    p.add_argument("--root", default=".")
+    p.add_argument("--policy", required=True)
+    p.add_argument("--action-file", required=True)
+    p.add_argument("--write-approval-log", action="store_true")
+    p.set_defaults(func=cmd_validate_policy)
+
+    p = sub.add_parser("run-evals", help="Run repo-local deterministic benchmark/eval fixtures")
+    p.add_argument("--root", default=".")
+    p.add_argument("--suite", required=True)
+    p.add_argument("--trials", type=int, default=3)
+    p.add_argument("--eval-run-id")
+    p.add_argument("--reset-existing", action="store_true")
+    p.set_defaults(func=cmd_run_evals)
 
     p = sub.add_parser("self-test", help="Run built-in substrate tests")
     p.set_defaults(func=cmd_self_test)

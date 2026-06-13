@@ -2,6 +2,143 @@
 
 > Personal goal-loop runtime for Codex and Claude Code. The harness is optimized for running a user's goals with explicit scope, adversarial pressure, durable evidence, and a user-fit operating style.
 
+## Portfolio Snapshot
+
+Signature Harness is a **repo-local completion-auditor harness for AI coding agents**. It is built around one failure mode: agents often say a goal is done before the evidence proves it, or keep working after the useful loop should have stopped.
+
+SH turns that problem into a small operating system for goal loops:
+
+```text
+Goal -> Seed -> Active Slice -> Orchestration -> Execution -> Evidence -> Oracle -> Complete / Gap Fill / Blocked / Evolve
+```
+
+Current status:
+
+| Claim | Status | Evidence |
+| --- | --- | --- |
+| Strong harness MVP | Defensible | `docs/scorecards/sh-runtime-evals-scorecard.md` reports **95 / 100 repo-local**. |
+| Runnable runtime substrate | Implemented | `scripts/sh_runtime.py` creates run state, trace, replay, ledger, eval, and policy artifacts. |
+| Artifact-backed completion gate | Implemented | Evidence-less completion is rejected by `validate-workflow-evidence --require-artifacts`. |
+| Eval suite | Implemented | `evals/benchmark_tasks.jsonl` has 20 tasks, 3 trials each; latest run passed 60/60. |
+| Security policy substrate | Implemented | `security/policy.json` and `validate-policy` enforce permission profiles and allowlists. |
+| Product-grade sandboxed execution | Not claimed | `run-resume` intentionally fails closed until a real sandbox adapter exists. |
+| Host-level Claude/Codex E2E proof | Not claimed | Current proof is repo-local, not full host orchestration. |
+
+The short version: this is no longer just prompts or docs. It has executable state, traces, replay, schemas, eval fixtures, failure taxonomy, permission checks, and adversarial QA evidence. It is still not a vertical product until sandboxed resume execution, host integration, and real run corpus are added.
+
+## Architecture At A Glance
+
+```mermaid
+flowchart TD
+  A["User Goal"] --> B["Goal Intake"]
+  B --> C["Seed Crystallizer"]
+  C --> D["Active Slice"]
+  D --> E["Orchestration Loop"]
+  E --> F["Goal Loop Execution"]
+  F --> G["Trace / Ledger / Artifacts"]
+  G --> H["Oracle Verification"]
+  H -->|COMPLETE| I["Close Run"]
+  H -->|INCOMPLETE verdict| J["GAP_FILL slice"]
+  H -->|BLOCKED| K["Blocked Receipt + Rehydration Gate"]
+  H -->|Drift / No Progress| L["Red-team / Evolution / Unstuck"]
+  J --> F
+  K --> M["RECOVERY"]
+  M --> F
+  L --> C
+```
+
+Control-plane rule:
+
+```text
+orchestration-loop watches, routes, pauses, blocks, and dispatches.
+goal-loop and execution tools do the actual work.
+oracle-verification is the only path to COMPLETE.
+```
+
+## What Was Built
+
+| Layer | What exists | Why it matters |
+| --- | --- | --- |
+| Goal loop contract | `skills/goal-loop`, `/sh`, `$sh-goal` | Keeps the public workflow surface small and goal-centered. |
+| Runtime state | `.sh/runs/<run_id>/run_manifest.json`, `state.json`, `step_ledger.jsonl`, `handoff.md` | A new session or reviewer can reconstruct the run without trusting chat history. |
+| Trace and replay | `trace.jsonl`, `tool_calls.jsonl`, `cost_latency.json`, `replay.json` | Completion claims can be tied to machine-readable evidence. |
+| State machine | `RUNNING`, `GAP_FILL`, `RECOVERY`, `PAUSED`, `BLOCKED`, `COMPLETE`, `ABORTED` | Invalid transitions fail closed instead of becoming LLM judgment calls. |
+| Oracle gate | `validate-workflow-evidence`, evidence manifests, gap-fill verdicts | "Done" requires artifacts, not descriptive confidence. |
+| Red-team pressure | `skills/red-team`, UltraQA negative probes | Optimism, sycophancy, no-progress loops, and false completion are treated as defects. |
+| Tool contracts | `schemas/tool_contracts.json` and schema validation | Runtime commands have declared inputs, outputs, exit codes, side effects, and failure modes. |
+| Failure taxonomy | `schemas/failure_taxonomy.json` | Recovery uses structured failure reasons instead of free-text failure reports. |
+| Security policy | `security/policy.json`, `validate-policy` | Read/write/network/shell intent is checked before dangerous actions are accepted. |
+| Eval suite | `evals/benchmark_tasks.jsonl`, `evals/regression_tasks.jsonl` | The harness can be regression-tested as a harness, not just read as a prompt bundle. |
+| Vertical focus | `docs/domain/completion-auditor/` | The first vertical is AI coding-agent completion auditing, not a generic assistant wrapper. |
+
+## Latest Verification Evidence
+
+The latest UltraQA recheck produced these artifacts:
+
+```text
+.sh/evals/ultraqa-recheck-20260613-031816-benchmark/eval_result.json
+.sh/evals/ultraqa-recheck-20260613-031816-regression/eval_result.json
+```
+
+Fresh verification summary:
+
+| Check | Result |
+| --- | --- |
+| `py -m py_compile scripts/sh_runtime.py` | Passed |
+| `py scripts/sh_runtime.py self-test` | Passed |
+| `py scripts/sh_runtime.py validate-schemas --root .` | Passed |
+| `py scripts/sh_runtime.py verify-ledger --root .` | Passed |
+| `claude plugin validate .` | Passed |
+| `git diff --check` | Passed |
+| Benchmark eval | 20 tasks, 60 trials, pass rate 1.0 |
+| Regression eval | 4 tasks, 12 trials, pass rate 1.0 |
+| Evidence-less completion probe | Blocked as `INCOMPLETE` |
+| Non-allowlisted network probe | Blocked as `PERMISSION_DENIED` |
+
+UltraQA also found and closed four concrete regressions:
+
+- `record-step` could force a state transition without a valid transition event.
+- schema validation checked required keys but not field types.
+- evals could pass while referenced expected artifacts were missing.
+- `scoped_network` enforced network allowlists but not filesystem write allowlists.
+
+## Five-Minute Reviewer Path
+
+Run the core checks:
+
+```powershell
+py -m py_compile scripts\sh_runtime.py
+py scripts\sh_runtime.py self-test
+py scripts\sh_runtime.py validate-schemas --root .
+py scripts\sh_runtime.py run-evals --root . --suite evals\benchmark_tasks.jsonl --trials 3 --eval-run-id reviewer-benchmark --reset-existing
+py scripts\sh_runtime.py run-evals --root . --suite evals\regression_tasks.jsonl --trials 3 --eval-run-id reviewer-regression --reset-existing
+py scripts\sh_runtime.py verify-ledger --root .
+claude plugin validate .
+git diff --check
+```
+
+Read the proof docs:
+
+| Document | Purpose |
+| --- | --- |
+| `docs/scorecards/sh-runtime-evals-scorecard.md` | Current score, evidence map, and non-claims. |
+| `docs/scorecards/ultraqa-sh-hardening-report.md` | Adversarial QA scenarios, failures found, fixes applied. |
+| `docs/exec-plans/active/sh-runtime-evals-observability.md` | Living implementation plan and decision log. |
+| `docs/domain/completion-auditor/rubric.md` | Vertical evaluator rubric. |
+| `docs/domain/completion-auditor/failure-corpus.md` | Domain failure corpus. |
+
+## Honest Boundaries
+
+SH is deliberately precise about what it does not yet prove.
+
+| Missing for 98+ | Current stance |
+| --- | --- |
+| Real sandbox adapter for `run-resume` | Not implemented; unsafe resume execution fails closed. |
+| Full Claude Code / Codex host E2E orchestration | Not claimed; current evidence is repo-local. |
+| LLM or human transcript judge | Not implemented; evals are deterministic fixtures plus substrate validators. |
+| Real user-run corpus | Not accumulated yet; domain corpus is fixture-based. |
+| Vertical product packaging | Not complete; current state is a strong harness MVP and portfolio artifact. |
+
 Signature Harness is no longer a fixed `research -> spec -> plan -> implement -> review` pipeline. That pipeline is only one possible loop. The core unit is now a **Goal**, the executable contract is a **Seed**, and durable learning moves through **candidate -> promotion** gates.
 
 ```text
@@ -173,6 +310,11 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
 py scripts/sh_runtime.py verify-ledger --root .
+py scripts/sh_runtime.py start-run --root . --goal-id smoke_goal --seed-id smoke_seed --active-slice smoke_slice --objective "Smoke runtime"
+py scripts/sh_runtime.py replay-run --root . --run-id smoke-runtime
+py scripts/sh_runtime.py validate-schemas --root .
+py scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/read_only_ok.json
+py scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3
 ```
 
 The substrate handles:
@@ -185,6 +327,10 @@ The substrate handles:
 - ledger hash-chain verification
 - resume-check contract validation
 - dynamic workflow evidence validation
+- durable run lifecycle artifacts under `.sh/runs/<run_id>/`
+- structured trace/tool-call/cost-latency/replay artifacts
+- repo-local schema, tool-contract, failure-taxonomy, eval, and security-policy validation
+- deterministic completion-auditor benchmark fixtures
 
 `run-resume` fails closed until a real sandbox adapter exists. Unsafe local execution is not a fallback.
 
@@ -643,15 +789,23 @@ SH intentionally does not copy the Pokemon/mGBA runtime. The useful subset is th
 
 ## Files
 
-- `scripts/sh_runtime.py` - deterministic runtime substrate for state, hash, directive, ledger, and resume-check validation
-- `docs/SIGNATURE_HARNESS_IMPLEMENTATION_REVIEW.md` - implementation/design review document covering what was built, why it was built that way, and what remains intentionally out of scope
-- `skills/` - portable skill core
-- `agents/` - Claude Code role prompts / conceptual role surfaces
-- `commands/sh.md` - Claude Code slash command entrypoint
-- `templates/` - durable goal, red-team, oracle, and ledger artifact templates
-- seed/evolution templates - stable contracts for repeated loop engineering
-- candidate/promotion/gap templates - safe learning contracts for personal fit
-- `AGENTS.md` - Codex adapter / repo-local operating contract
+| Path | Purpose |
+| --- | --- |
+| `scripts/sh_runtime.py` | Stable CLI entrypoint and command-handler surface for the deterministic runtime substrate. |
+| `scripts/sh_runtime_core.py` | Shared runtime invariants and helpers for state transitions, JSON IO, schema subset validation, path checks, and hashing. |
+| `scripts/README.md` | Runtime command reference and exit-code semantics. |
+| `schemas/` | Machine-readable contracts for tool contracts, failure taxonomy, trace events, eval tasks, run manifests, and security policy. |
+| `evals/` | Completion-auditor benchmark suite, regression suite, fixtures, and resource spec. |
+| `security/` | Permission profiles, network/write policy, approval fixtures, and negative policy probes. |
+| `docs/domain/completion-auditor/` | First vertical: glossary, evaluator rubric, failure corpus, and demo run. |
+| `docs/scorecards/` | Current scorecard and UltraQA hardening report. |
+| `docs/exec-plans/` | Living implementation plan with progress, surprises, decisions, and validation evidence. |
+| `docs/SIGNATURE_HARNESS_IMPLEMENTATION_REVIEW.md` | Earlier implementation/design review covering what was built, why it was built that way, and what remains out of scope. |
+| `skills/` | Portable skill core. |
+| `agents/` | Claude Code role prompts and conceptual role surfaces. |
+| `commands/sh.md` | Claude Code slash command entrypoint. |
+| `templates/` | Durable goal, workflow evidence, red-team, oracle, ledger, seed, evolution, candidate, promotion, and gap templates. |
+| `AGENTS.md` | Codex adapter and repo-local operating contract. |
 
 ## Next Build Steps
 

@@ -4,6 +4,13 @@ This folder contains small mechanical helpers for Signature Harness. These are
 not a standalone product CLI; they only handle checks that should be
 deterministic instead of prompt-driven.
 
+Implementation boundary:
+
+- `sh_runtime.py` is the stable CLI entrypoint and command-handler surface.
+- `sh_runtime_core.py` holds shared invariants and deterministic helpers such
+  as state transitions, JSON IO, schema subset validation, path checks, and
+  hashing.
+
 Use `py` on Windows when `python` resolves to the Windows Store stub:
 
 ```powershell
@@ -23,6 +30,14 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_
 py scripts/sh_runtime.py write-directive --run-id run_1 --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
 py scripts/sh_runtime.py verify-ledger --root .
+py scripts/sh_runtime.py start-run --root . --goal-id smoke_goal --seed-id smoke_seed --active-slice smoke_slice --objective "Smoke runtime"
+py scripts/sh_runtime.py record-step --root . --run-id <run_id> --step-id step_1 --operation-name inspect --state-before RUNNING --state-after RUNNING --artifact README.md
+py scripts/sh_runtime.py record-interruption --root . --run-id <run_id> --kind pause --reason "smoke pause"
+py scripts/sh_runtime.py resume-run --root . --run-id <run_id> --reason "smoke resume"
+py scripts/sh_runtime.py replay-run --root . --run-id <run_id>
+py scripts/sh_runtime.py validate-schemas --root .
+py scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/read_only_ok.json
+py scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3
 ```
 
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
@@ -40,10 +55,24 @@ completion-eligible. Exit code `0` means `COMPLETE_ELIGIBLE`, `2` means invalid
 schema, and `5` means schema-valid but `INCOMPLETE`. A valid schema with
 `completion_allowed: false` should become an Oracle `INCOMPLETE` verdict and an
 orchestration `GAP_FILL` slice.
-Use `--require-artifacts --root <path>` when completion must be backed by
-existing evidence files rather than descriptive strings. Add
+By default the CLI requires artifact-backed evidence. Add
+`--allow-descriptive-evidence` only for legacy or low-risk checks that
+explicitly permit descriptive strings. Add
 `--evidence-manifest <path>` to require those files to appear in a prior
 `hash-manifest` output's `evidence_assets` with matching `sha256` and `size`.
+
+The durable runner commands create ignored runtime artifacts under
+`.sh/runs/<run_id>/`: `run_manifest.json`, `state.json`,
+`step_ledger.jsonl`, `interruptions.json`, `handoff.md`, `replay.json`,
+`trace.jsonl`, `tool_calls.jsonl`, `cost_latency.json`, and `artifacts.json`.
+`replay-run` reconstructs the core run flow from those artifacts.
+If `record-step` changes state, pass `--event <state-machine-event>`; the event must match the canonical transition map. Same-state trace rows do not require an event.
+
+`run-evals` executes repo-local deterministic benchmark fixtures. It writes
+`.sh/evals/<eval_run_id>/eval_result.json` and
+`.sh/evals/<eval_run_id>/transcript_review.md`, and returns exit code `8`
+when any trial fails.
+Eval tasks must reference existing `expected_artifacts`; selected fixtures can also invoke the workflow evidence validator, resume contract validator, or policy validator as part of grading.
 
 `append-ledger` writes `prev_hash` and `entry_hash`; callers may not provide
 chain-reserved keys. `verify-ledger` checks the full hash chain and exits `6`

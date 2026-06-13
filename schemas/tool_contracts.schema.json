@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frogrim.local/signature-harness/tool_contracts.schema.json",
+  "title": "Signature Harness Tool Contracts",
+  "type": "object",
+  "required": ["tools"],
+  "properties": {
+    "tools": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "inputSchema", "outputSchema", "exit_codes", "retryability", "timeout_sec", "side_effect_class", "approval_required", "emitted_artifacts", "failure_modes"],
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "inputSchema": {"type": "object"},
+          "outputSchema": {"type": "object"},
+          "exit_codes": {"type": "object", "additionalProperties": {"type": "string"}},
+          "retryability": {"type": "string"},
+          "timeout_sec": {"type": "integer", "minimum": 1},
+          "side_effect_class": {"type": "string"},
+          "approval_required": {"type": "boolean"},
+          "emitted_artifacts": {"type": "array", "items": {"type": "string"}},
+          "failure_modes": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

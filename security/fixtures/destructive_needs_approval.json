@@ -1,0 +1,8 @@
+{
+  "id": "destructive_needs_approval",
+  "permission_profile": "workspace_write",
+  "filesystem": {"writes": ["docs/scorecards/sh-runtime-evals-scorecard.md"], "destructive": true},
+  "network": {"domains": []},
+  "command": {"argv": ["python", "--version"], "shell": false},
+  "approval": {"id": "destructive_needs_approval", "result": "denied", "reviewer": "fixture", "reason": "destructive operation not approved"}
+}

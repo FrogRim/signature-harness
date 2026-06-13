@@ -1,0 +1,6 @@
+{
+  "workflow_id": "wf_001",
+  "status": "complete_eligible",
+  "records_checked": ["lane_1"],
+  "verdict": "artifact_backed_complete"
+}
