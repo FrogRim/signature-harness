@@ -41,6 +41,11 @@ py scripts/sh_runtime.py validate-policy --root . --policy security/policy.json 
 py scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3
 ```
 
+`validate-schemas` checks JSON schema files, tool contracts, failure taxonomy,
+eval task fixtures, the security policy presence, and plugin/marketplace
+manifest identity. Manifest descriptions and host-specific interface fields may
+differ, but every present manifest must keep the same `name` and `version`.
+
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
 Unsafe local execution would violate the resume-check security contract.
 

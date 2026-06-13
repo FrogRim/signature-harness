@@ -1585,16 +1585,95 @@ def validate_eval_files(root: Path) -> Dict[str, Any]:
     return {"ok": not findings, "benchmark_task_count": task_count, "findings": findings}
 
 
+MANIFEST_IDENTITY_FILES = (
+    "plugin.json",
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    ".codex-plugin/marketplace.json",
+)
+
+
+def validate_manifest_consistency(root: Path) -> Dict[str, Any]:
+    """Guard the cross-manifest invariants.
+
+    Only ``name`` and ``version`` must stay in lockstep across every plugin and
+    marketplace manifest (including nested ``plugins[]`` entries). Presentation
+    fields such as description, category, and the interface block are
+    intentionally allowed to differ per host, so they are not checked here. A
+    missing manifest is skipped rather than flagged, so the file set can be
+    pruned later without tripping the guard, but the canonical Claude Code
+    manifest must exist.
+    """
+    findings: List[Dict[str, str]] = []
+    names: Dict[str, Any] = {}
+    versions: Dict[str, Any] = {}
+    checked: List[str] = []
+
+    def record(label: str, obj: Any) -> None:
+        if not isinstance(obj, dict):
+            return
+        if "name" in obj:
+            names[label] = obj.get("name")
+        if "version" in obj:
+            versions[label] = obj.get("version")
+
+    for rel in MANIFEST_IDENTITY_FILES:
+        path = root / rel
+        if not path.exists():
+            continue
+        checked.append(rel)
+        try:
+            payload = load_json(path)
+        except ShRuntimeError:
+            findings.append({"code": "manifest_unreadable", "detail": rel})
+            continue
+        if not isinstance(payload, dict):
+            findings.append({"code": "manifest_not_object", "detail": rel})
+            continue
+        record(rel, payload)
+        plugins = payload.get("plugins")
+        if isinstance(plugins, list):
+            for index, plugin in enumerate(plugins):
+                record(f"{rel}#plugins[{index}]", plugin)
+
+    if not (root / ".claude-plugin" / "plugin.json").exists():
+        findings.append({"code": "missing_canonical_manifest", "detail": ".claude-plugin/plugin.json"})
+
+    distinct_names = {value for value in names.values()}
+    distinct_versions = {value for value in versions.values()}
+    if len(distinct_names) > 1:
+        findings.append({
+            "code": "manifest_name_mismatch",
+            "detail": "; ".join(f"{label}={names[label]!r}" for label in sorted(names)),
+        })
+    if len(distinct_versions) > 1:
+        findings.append({
+            "code": "manifest_version_mismatch",
+            "detail": "; ".join(f"{label}={versions[label]!r}" for label in sorted(versions)),
+        })
+
+    return {
+        "ok": not findings,
+        "findings": findings,
+        "files_checked": checked,
+        "name": next(iter(distinct_names)) if len(distinct_names) == 1 else None,
+        "version": next(iter(distinct_versions)) if len(distinct_versions) == 1 else None,
+    }
+
+
 def cmd_validate_schemas(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     schema_result = validate_json_schema_files(root)
     eval_result = validate_eval_files(root)
+    manifest_result = validate_manifest_consistency(root)
     policy_path = root / "security" / "policy.json"
     policy_ok = policy_path.exists() and isinstance(load_json(policy_path), dict)
     result = {
-        "ok": schema_result["ok"] and eval_result["ok"] and policy_ok,
+        "ok": schema_result["ok"] and eval_result["ok"] and manifest_result["ok"] and policy_ok,
         "schemas": schema_result,
         "evals": eval_result,
+        "manifests": manifest_result,
         "security_policy_present": policy_ok,
     }
     return emit(result, 0 if result["ok"] else 2)
@@ -2449,6 +2528,25 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         ledger.write_text("\n".join(lines) + "\n", encoding="utf-8")
         assert not verify_ledger(ledger)["ok"]
 
+        # Manifest identity guard: matching name/version passes; a skewed
+        # version or a missing canonical manifest is reported.
+        guard_root = root / "manifest_guard"
+        (guard_root / ".claude-plugin").mkdir(parents=True)
+        (guard_root / ".codex-plugin").mkdir(parents=True)
+        write_json(guard_root / "plugin.json", {"name": "demo", "version": "1.0.0"})
+        write_json(guard_root / ".claude-plugin" / "plugin.json", {"name": "demo", "version": "1.0.0"})
+        write_json(guard_root / ".codex-plugin" / "plugin.json", {"name": "demo", "version": "1.0.0"})
+        write_json(guard_root / ".claude-plugin" / "marketplace.json", {"name": "demo", "version": "1.0.0", "plugins": [{"name": "demo", "version": "1.0.0"}]})
+        assert validate_manifest_consistency(guard_root)["ok"]
+        write_json(guard_root / ".codex-plugin" / "plugin.json", {"name": "demo", "version": "1.0.1"})
+        skew = validate_manifest_consistency(guard_root)
+        assert not skew["ok"]
+        assert any(item["code"] == "manifest_version_mismatch" for item in skew["findings"])
+        missing_root = root / "manifest_missing"
+        missing_root.mkdir()
+        write_json(missing_root / "plugin.json", {"name": "demo", "version": "1.0.0"})
+        assert any(item["code"] == "missing_canonical_manifest" for item in validate_manifest_consistency(missing_root)["findings"])
+
     return emit({"ok": True, "self_test": "passed"})
 
 
@@ -2572,7 +2670,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--refresh", action="store_true")
     p.set_defaults(func=cmd_replay_run)
 
-    p = sub.add_parser("validate-schemas", help="Validate repo-local schemas, tool contracts, taxonomy, and eval task files")
+    p = sub.add_parser("validate-schemas", help="Validate repo schemas, contracts, taxonomy, eval tasks, policy, and manifest identity")
     p.add_argument("--root", default=".")
     p.set_defaults(func=cmd_validate_schemas)
 
