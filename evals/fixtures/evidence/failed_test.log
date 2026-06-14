@@ -1,0 +1,1 @@
+FAILED tests/test_completion_gate.py::test_requires_artifacts - assertion error: descriptive claim accepted
