@@ -13,10 +13,21 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compile runtime
-        run: python -m py_compile scripts/sh_runtime.py
-      - name: Validate schemas, contracts, taxonomy, eval tasks, and policy
+        run: python -m py_compile scripts/sh_runtime.py scripts/sh_runtime_core.py
+      - name: Validate schemas, contracts, taxonomy, eval tasks, policy, and manifest identity
         run: python scripts/sh_runtime.py validate-schemas --root .
       - name: Run runtime self-test
         run: python scripts/sh_runtime.py self-test
       - name: Run deterministic benchmark suite
         run: python scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3 --eval-run-id ci-benchmark --reset-existing
+      - name: Run regression suite
+        run: python scripts/sh_runtime.py run-evals --root . --suite evals/regression_tasks.jsonl --trials 3 --eval-run-id ci-regression --reset-existing
+      - name: Policy smoke (allow passes)
+        run: python scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/read_only_ok.json
+      - name: Policy smoke (deny is BLOCKED, exit 7)
+        run: |
+          set +e
+          python scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/dangerous_shell_needs_approval.json
+          code=$?
+          set -e
+          test "$code" -eq 7 || { echo "expected exit 7 (BLOCKED), got $code"; exit 1; }
