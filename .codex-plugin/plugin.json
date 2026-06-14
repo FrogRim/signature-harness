@@ -17,21 +17,5 @@
     "oracle-verification",
     "codex",
     "claude-code"
-  ],
-  "skills": "./skills/",
-  "interface": {
-    "displayName": "Signature Harness",
-    "shortDescription": "Goal-loop harness for verified agent work",
-    "longDescription": "Signature Harness routes goals through active slices, Seed contracts, dynamic workflow cost gates, read-only orchestration, red-team pressure, staged oracle verification, gap-fill recovery, and user-fit calibration.",
-    "developerName": "Frogrim",
-    "category": "Developer Tools",
-    "capabilities": [
-      "Interactive"
-    ],
-    "websiteURL": "https://github.com/FrogRim/signature-harness",
-    "defaultPrompt": [
-      "Run a goal-loop with orchestration, red-team pressure, and oracle verification"
-    ],
-    "brandColor": "#111827"
-  }
+  ]
 }
