@@ -14,7 +14,11 @@ Do not treat the old `research -> spec -> plan -> implement -> review` pipeline 
 
 ## Public Workflow Surface
 
-Public entrypoints are `/sh <goal>` for Claude Code and `$sh-goal` for portable Codex/Claude use. The remaining skills are internal modules routed by the goal loop.
+Public entrypoints are `/sh <goal>` (also `/signature-harness:sh`) for Claude Code and `$sh-goal` for portable Codex/Claude use. Skills fall into three tiers:
+
+1. **Public entrypoints** - `/sh`, `/signature-harness:sh`, `$sh-goal`. These are all you normally invoke.
+2. **Direct utility skills** - `deep-interview`, `brainstorming`, `test-driven-development`. The goal loop routes to them, but you may also call them directly.
+3. **Routed internal modules** - everything else (`orchestration-loop`, `oracle-verification`, `red-team`, `active-slice`, `seed-crystallizer`, ...), driven by the goal loop rather than invoked directly.
 
 Use the portable skills in this repo:
 
@@ -33,13 +37,13 @@ Use the portable skills in this repo:
 - `gap-closure` - record gaps with closure path, evidence source, and gate.
 - `user-fit` - preserve the user's preferred autonomy, rigor, questioning, and reporting style.
 
-Existing utility skills remain available when they fit the routed loop:
+Tier 2 utility skills can be invoked directly when they fit:
 
 - `deep-interview` for unclear intent
 - `brainstorming` for option exploration
-- `scope-guard` for scope boundaries
-- `test-driven-development` for implementation loops
-- `verification` for source/evidence checks
+- `test-driven-development` for behavior-pinned implementation
+
+All other skills (`scope-guard`, `verification`, and the routed modules above) are Tier 3: invoked by the goal loop, not directly.
 
 ## Rules
 

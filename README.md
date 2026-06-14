@@ -66,7 +66,13 @@ flowchart TD
 | Claude Code namespaced | `/signature-harness:sh <goal>` |
 | Codex / portable skill | `$sh-goal <goal>` |
 
-나머지 skill은 내부 module입니다. 직접 부르기보다 `/sh` 또는 `$sh-goal`이 routing하도록 두는 것을 기본으로 합니다.
+skill은 세 tier로 나뉩니다.
+
+1. **Public entrypoint** — `/sh`, `/signature-harness:sh`, `$sh-goal`. 평소에는 이 entrypoint만 기억하면 됩니다.
+2. **Direct utility skill** — `deep-interview`, `brainstorming`, `test-driven-development`. goal loop이 routing으로 부르기도 하지만, 필요하면 직접 호출해도 되는 범용 보조 도구입니다.
+3. **Routed internal module** — `orchestration-loop`, `oracle-verification`, `red-team`, `active-slice`, `seed-crystallizer` 등. 직접 부르기보다 `/sh` 또는 `$sh-goal`의 routing에 맡기는 것이 기본입니다.
+
+선로는 좁게 두고(entrypoint 최소화), 보조 공구는 필요할 때 직접 꺼낼 수 있게 한 구조입니다.
 
 ## 설치
 
