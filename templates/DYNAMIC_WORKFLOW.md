@@ -8,6 +8,10 @@
 
 Use a dynamic workflow only when the work has real coordination value: independent lanes, adversarial verification, tournament selection, repeated completion checks, or domain-specific routing. Otherwise keep the ordinary goal loop.
 
+Parallel fan-out is default-deny. Prefer the ordinary serial goal loop unless
+lane independence, comparable evidence, a synthesis owner, and the cost gate are
+all explicit.
+
 ## Selected Pattern
 One of:
 
@@ -25,6 +29,9 @@ Rationale:
 - goal_id:
 - seed_id:
 - active_slice:
+- fan_out_allowed: yes | no
+- independence_evidence:
+- serial_fallback:
 - lanes:
   - id:
     owner:

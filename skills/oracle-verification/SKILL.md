@@ -13,7 +13,8 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 
 - normalized goal
 - active Seed or explicit reason no Seed was needed
-- success criteria
+- frozen Seed `acceptance_criteria`
+- `verification_tier`
 - non-goals
 - plan or routed loop summary
 - result summary
@@ -31,7 +32,7 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
 1. Re-read the goal and stop condition.
 2. Confirm the active Seed matches the goal, or record why no Seed was needed.
 3. Stage 1: run or inspect mechanical verification.
-4. Stage 2: map each success criterion to evidence and measure drift.
+4. Stage 2: map each frozen acceptance criterion to evidence and measure drift.
 5. Stage 3: trigger consensus review only when uncertainty, risk, red-team disagreement, or user request justifies it.
 6. Confirm red-team `BLOCK` findings are resolved.
 7. Confirm non-goals and scope boundaries were respected.
@@ -42,6 +43,19 @@ The oracle decides whether completion is proven. It runs cheap mechanical checks
    - `COMPLETE` - evidence proves the goal.
    - `INCOMPLETE` - evidence is missing or mismatched; include `evidence_gap_report`.
    - `BLOCKED` - progress needs user input, authority, credentials, or an external state change; include `blocked_receipt`.
+
+## Measured Completion Gate
+
+`COMPLETE` is allowed only when all of the following are true:
+
+- every frozen `acceptance_criteria` item is mapped to artifact-backed evidence or an explicit semantic verifier
+- the evidence satisfies the criterion's pass condition
+- `verification_tier` evidence depth was met without upgrading the model's process requirements into unnecessary ceremony
+- red-team has no unresolved `BLOCK` finding
+- drift scores do not show goal, constraint, ontology, or evidence mismatch
+
+If a criterion is missing, weakened after Seed acceptance, or only supported by a
+descriptive completion claim, return `INCOMPLETE` with an `evidence_gap_report`.
 
 ## Drift Scores
 
@@ -128,7 +142,7 @@ Seed: <seed id/hash or none with reason>
 - <check> -> passed | failed | not run
 
 ## Stage 2 - Semantic
-- <success criterion> -> <evidence>
+- <acceptance criterion id> -> <evidence and pass/fail reason>
 
 ## Drift
 - goal_drift: 0.0-1.0
@@ -137,7 +151,7 @@ Seed: <seed id/hash or none with reason>
 - evidence_gap: 0.0-1.0
 
 ## Evidence Map
-- <success criterion> -> <evidence>
+- <acceptance criterion id> -> <evidence>
 
 ## Dynamic Workflow Evidence
 - contract_path:

@@ -27,7 +27,21 @@ Status: draft | accepted | superseded | blocked
 - <constraint>
 
 ## Acceptance Criteria
-- <checkable criterion>
+- id:
+  claim:
+  evidence_required:
+  verification_method: mechanical | semantic | mixed
+  pass_condition:
+
+Acceptance criteria are frozen when the Seed is accepted. Weakening or
+reinterpreting them requires a new Seed generation through `evolution-loop`.
+
+## Verification Tier
+- tier: low | medium | high | release
+- evidence_depth:
+
+The tier controls evidence depth only. It does not prescribe the model's
+reasoning, design, or implementation process.
 
 ## Non-Goals
 - <out of scope>

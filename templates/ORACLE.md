@@ -7,7 +7,7 @@ Seed: <seed id/hash or none with reason>
 - <check> -> passed | failed | not run
 
 ## Stage 2 - Semantic
-- <success criterion> -> <evidence>
+- <acceptance criterion id> -> <evidence and pass/fail reason>
 
 ## Drift
 - goal_drift: 0.0-1.0
@@ -16,7 +16,14 @@ Seed: <seed id/hash or none with reason>
 - evidence_gap: 0.0-1.0
 
 ## Evidence Map
-- <success criterion> -> <evidence>
+- <acceptance criterion id> -> <evidence>
+
+## Measured Completion Gate
+- every_frozen_criterion_mapped: yes | no
+- verification_tier_met: yes | no
+- descriptive_claim_only: yes | no
+- red_team_blocks_resolved: yes | no
+- completion_allowed: yes | no
 
 ## Dynamic Workflow Evidence
 - contract_path:

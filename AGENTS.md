@@ -50,6 +50,8 @@ All other skills (`scope-guard`, `verification`, and the routed modules above) a
 - Normalize goals before execution when the request is broad, long-running, or ambiguous.
 - Preserve the global goal while selecting only the current active slice for execution.
 - Do not execute broad or ambiguous work until a Seed is accepted.
+- Freeze falsifiable `acceptance_criteria` and a `verification_tier` before accepting a Seed for broad work.
+- Treat `verification_tier` as evidence depth only; do not use it to prescribe the model's reasoning, design, or implementation process.
 - Score ambiguity before seed acceptance. If ambiguity is materially high, clarify first.
 - Restate the goal before locking a Seed.
 - Reference the active Seed in plans, checkpoints, red-team reports, and oracle receipts.
@@ -75,6 +77,7 @@ All other skills (`scope-guard`, `verification`, and the routed modules above) a
 - Convert run learning into `improvement-candidate`; do not silently mutate active rules, fit profile, or seed defaults.
 - Promote candidates only through `promotion-gate`.
 - Treat parallel workers as hypothesis runs with evidence and scores, not as unsupervised memory writers.
+- Default to serial execution. Use parallel fan-out only when lane independence, comparable evidence, a synthesis owner, and the dynamic workflow cost gate are explicit.
 - Every known gap must have a closure path or be reported as residual risk.
 - Persist or report evidence for every completion claim.
 - Keep worker/subagent roles bounded. The leader owns goal state and completion.

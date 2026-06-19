@@ -153,7 +153,8 @@ If there is no runtime, produce equivalent markdown artifacts from `templates/`.
 
 Never mark a goal complete until:
 
-- success criteria are mapped to evidence
+- frozen acceptance criteria are mapped to evidence
+- required `verification_tier` evidence depth is met
 - the active Seed is referenced or the work is small enough to justify no Seed
 - the active slice completion signal is proven
 - red-team `BLOCK` findings are resolved
