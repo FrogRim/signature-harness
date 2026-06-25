@@ -153,6 +153,7 @@ frozen acceptance criteria all mapped to evidence
 .sh/runs/<run_id>/step_ledger.jsonl
 .sh/runs/<run_id>/replay.json
 .sh/evals/<eval_run_id>/eval_result.json
+.sh/evals/<eval_run_id>/scorecard.json
 ```
 
 ## 상태 머신
@@ -261,6 +262,7 @@ pull 후 최소 검증:
 py -m py_compile scripts\sh_runtime.py scripts\sh_runtime_core.py
 py scripts\sh_runtime.py self-test
 py scripts\sh_runtime.py validate-schemas --root .
+py scripts\sh_runtime.py validate-release --root .
 git diff --check
 ```
 

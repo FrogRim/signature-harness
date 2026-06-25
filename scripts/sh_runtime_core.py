@@ -157,6 +157,7 @@ DYNAMIC_WORKFLOW_PATTERNS = {
 }
 AGENT_NAME = "signature-harness"
 AGENT_VERSION = "0.9.0-runtime-evals"
+SCHEMA_VERSION = "0.9.0-schema-contracts"
 RUN_ARTIFACT_FILES = {
     "manifest": "run_manifest.json",
     "state": "state.json",
@@ -215,6 +216,7 @@ EXPECTED_SCHEMA_FILES = {
     "eval_task.schema.json",
     "security_policy.schema.json",
     "completion_artifact.schema.json",
+    "scorecard.schema.json",
 }
 EXPECTED_TOOL_CONTRACTS = {
     "init-state",
@@ -234,6 +236,7 @@ EXPECTED_TOOL_CONTRACTS = {
     "validate-schemas",
     "validate-policy",
     "validate-completion-artifact",
+    "validate-release",
     "run-evals",
     "self-test",
 }

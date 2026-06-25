@@ -16,6 +16,8 @@ jobs:
         run: python -m py_compile scripts/sh_runtime.py scripts/sh_runtime_core.py
       - name: Validate schemas, contracts, taxonomy, eval tasks, policy, and manifest identity
         run: python scripts/sh_runtime.py validate-schemas --root .
+      - name: Validate release gate
+        run: python scripts/sh_runtime.py validate-release --root .
       - name: Run runtime self-test
         run: python scripts/sh_runtime.py self-test
       - name: Run deterministic benchmark suite

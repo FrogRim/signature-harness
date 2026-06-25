@@ -199,8 +199,21 @@
       "name": "validate-schemas",
       "description": "Validate repo-local schema presence, tool contracts, failure taxonomy, eval task corpus, and security policy presence.",
       "inputSchema": {"type": "object", "properties": {"root": {"type": "string"}}},
-      "outputSchema": {"type": "object", "required": ["ok", "schemas", "evals", "security_policy_present"]},
+      "outputSchema": {"type": "object", "required": ["ok", "schemas", "evals", "security_policy_present", "versions"]},
       "exit_codes": {"0": "schemas and fixtures valid", "2": "schema or fixture contract invalid"},
+      "retryability": "repair_required",
+      "timeout_sec": 10,
+      "side_effect_class": "read_only",
+      "approval_required": false,
+      "emitted_artifacts": [],
+      "failure_modes": ["CONTRACT_VIOLATION", "BENCHMARK_INFRA_FAILURE"]
+    },
+    {
+      "name": "validate-release",
+      "description": "Validate release gate contracts, thin-contract anchors, forbidden prompt-template phrases, and explicit plugin/runtime/schema version surface.",
+      "inputSchema": {"type": "object", "properties": {"root": {"type": "string"}}},
+      "outputSchema": {"type": "object", "required": ["ok", "release_gate_schema", "schemas", "evals", "manifests", "static_contracts", "versions", "version_surface_ok"]},
+      "exit_codes": {"0": "release gate passed", "9": "release gate failed", "2": "schema or fixture contract invalid"},
       "retryability": "repair_required",
       "timeout_sec": 10,
       "side_effect_class": "read_only",
@@ -231,7 +244,7 @@
       "timeout_sec": 30,
       "side_effect_class": "runtime_write",
       "approval_required": false,
-      "emitted_artifacts": [".sh/evals/<eval_run_id>/eval_result.json", ".sh/evals/<eval_run_id>/transcript_review.md"],
+      "emitted_artifacts": [".sh/evals/<eval_run_id>/eval_result.json", ".sh/evals/<eval_run_id>/scorecard.json", ".sh/evals/<eval_run_id>/transcript_review.md"],
       "failure_modes": ["BENCHMARK_INFRA_FAILURE", "INVALID_EVIDENCE", "NO_PROGRESS"]
     },
     {

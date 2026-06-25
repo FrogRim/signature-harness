@@ -39,6 +39,7 @@ from sh_runtime_core import (
     RESERVED_LEDGER_KEYS,
     RUN_ARTIFACT_FILES,
     SAFE_ID_RE,
+    SCHEMA_VERSION,
     TERMINAL_STATES,
     WINDOWS_SCRIPT_SHIM_NAMES,
     WINDOWS_SCRIPT_SUFFIXES,
@@ -1662,6 +1663,27 @@ def validate_manifest_consistency(root: Path) -> Dict[str, Any]:
     }
 
 
+def build_version_surface(root: Path, manifest_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    manifest_result = manifest_result or validate_manifest_consistency(root)
+    plugin_version = manifest_result.get("version")
+    canonical_manifest = root / ".claude-plugin" / "plugin.json"
+    if not is_non_empty_string(plugin_version) and canonical_manifest.exists():
+        try:
+            payload = load_json_object(canonical_manifest, "canonical plugin manifest")
+            plugin_version = payload.get("version")
+        except ShRuntimeError:
+            plugin_version = None
+    return {
+        "plugin_version": plugin_version,
+        "plugin_version_source": ".claude-plugin/plugin.json via manifest identity guard",
+        "runtime_agent_name": AGENT_NAME,
+        "runtime_version": AGENT_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "schema_files_checked": sorted(EXPECTED_SCHEMA_FILES),
+        "manifest_files_checked": list(manifest_result.get("files_checked", [])),
+    }
+
+
 def cmd_validate_schemas(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     schema_result = validate_json_schema_files(root)
@@ -1675,8 +1697,119 @@ def cmd_validate_schemas(args: argparse.Namespace) -> int:
         "evals": eval_result,
         "manifests": manifest_result,
         "security_policy_present": policy_ok,
+        "versions": build_version_surface(root, manifest_result),
     }
     return emit(result, 0 if result["ok"] else 2)
+
+
+RELEASE_FORBIDDEN_PHRASES = (
+    "production-grade",
+    "100%",
+    "auto-commit",
+    "auto commit",
+    "every-step-E2E",
+    "every meaningful step",
+)
+
+RELEASE_SCAN_PATTERNS = (
+    "README.md",
+    "AGENTS.md",
+    "skills/**/*.md",
+    "templates/**/*.md",
+)
+
+RELEASE_REQUIRED_ANCHORS = (
+    ("README.md", "## Thin Contract Patch"),
+    ("AGENTS.md", "acceptance_criteria"),
+    ("AGENTS.md", "verification_tier"),
+    ("skills/seed-crystallizer/SKILL.md", "acceptance_criteria:"),
+    ("skills/seed-crystallizer/SKILL.md", "verification_tier: low | medium | high | release"),
+    ("skills/oracle-verification/SKILL.md", "## Measured Completion Gate"),
+    ("skills/parallel-hypothesis/SKILL.md", "Parallel fan-out is default-deny"),
+    ("templates/SEED.md", "## Verification Tier"),
+    ("templates/ORACLE.md", "## Measured Completion Gate"),
+    ("templates/DYNAMIC_WORKFLOW.md", "Parallel fan-out is default-deny"),
+)
+
+
+def release_scan_files(root: Path) -> List[Path]:
+    files: Dict[str, Path] = {}
+    for pattern in RELEASE_SCAN_PATTERNS:
+        for path in root.glob(pattern):
+            if path.is_file():
+                files[rel_posix(path.resolve(), root)] = path.resolve()
+    return [files[key] for key in sorted(files)]
+
+
+def validate_release_static_contracts(root: Path) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    anchors_checked: List[Dict[str, str]] = []
+    for rel, needle in RELEASE_REQUIRED_ANCHORS:
+        path = root / rel
+        anchors_checked.append({"path": rel, "contains": needle})
+        if not path.exists() or not path.is_file():
+            findings.append({"code": "release_anchor_file_missing", "detail": rel})
+            continue
+        text = path.read_text(encoding="utf-8-sig")
+        if needle not in text:
+            findings.append({"code": "release_anchor_missing", "detail": f"{rel} missing {needle!r}"})
+
+    scanned_files = release_scan_files(root)
+    for path in scanned_files:
+        rel = rel_posix(path, root)
+        text = path.read_text(encoding="utf-8-sig")
+        text_lower = text.lower()
+        for phrase in RELEASE_FORBIDDEN_PHRASES:
+            haystack = text if phrase == "100%" else text_lower
+            needle = phrase if phrase == "100%" else phrase.lower()
+            if needle in haystack:
+                findings.append({"code": "release_forbidden_phrase", "detail": f"{rel} contains {phrase!r}"})
+
+    return {
+        "ok": not findings,
+        "findings": findings,
+        "anchors_checked": anchors_checked,
+        "forbidden_phrases": list(RELEASE_FORBIDDEN_PHRASES),
+        "files_scanned": [rel_posix(path, root) for path in scanned_files],
+    }
+
+
+def cmd_validate_release(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    schema_result = validate_json_schema_files(root)
+    eval_result = validate_eval_files(root)
+    manifest_result = validate_manifest_consistency(root)
+    policy_path = root / "security" / "policy.json"
+    policy_ok = policy_path.exists() and isinstance(load_json(policy_path), dict)
+    static_result = validate_release_static_contracts(root)
+    version_surface = build_version_surface(root, manifest_result)
+    version_ok = all(
+        is_non_empty_string(version_surface.get(key))
+        for key in ("plugin_version", "runtime_version", "schema_version")
+    )
+    result = {
+        "ok": schema_result["ok"] and eval_result["ok"] and manifest_result["ok"] and policy_ok and static_result["ok"] and version_ok,
+        "release_gate_schema": "sh.release_gate.v1",
+        "generated_at": utc_now(),
+        "schemas": schema_result,
+        "evals": eval_result,
+        "manifests": manifest_result,
+        "security_policy_present": policy_ok,
+        "static_contracts": static_result,
+        "versions": version_surface,
+        "version_surface_ok": version_ok,
+        "recommended_verification": [
+            "py -3 -m py_compile scripts/sh_runtime.py scripts/sh_runtime_core.py",
+            "py -3 scripts/sh_runtime.py self-test",
+            "py -3 scripts/sh_runtime.py validate-schemas --root .",
+            "py -3 scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3 --eval-run-id release-benchmark --reset-existing",
+            "py -3 scripts/sh_runtime.py run-evals --root . --suite evals/regression_tasks.jsonl --trials 3 --eval-run-id release-regression --reset-existing",
+        ],
+    }
+    substrate_ok = schema_result["ok"] and eval_result["ok"] and manifest_result["ok"]
+    if result["ok"]:
+        return emit(result, 0)
+    return emit(result, 2 if not substrate_ok else 9)
 
 
 def validate_policy_action(root: Path, policy: Dict[str, Any], action: Dict[str, Any]) -> Dict[str, Any]:
@@ -1849,11 +1982,118 @@ def grade_eval_task(root: Path, task: Dict[str, Any], trial_index: int) -> Dict[
         "behavior_pass": bool(behavior_pass),
         "validator_pass": bool(validator["ok"]),
         "validator_type": validator.get("type"),
+        "signals": sorted(str(signal) for signal in signals),
         "failure_code": fixture.get("failure_code"),
         "duration_ms": int(fixture.get("duration_ms", 100)),
         "estimated_cost": float(fixture.get("estimated_cost", 0.0)),
         "retries": int(fixture.get("retries", 0)),
         "tool_errors": int(fixture.get("tool_errors", 0)),
+    }
+
+
+def count_values(rows: List[Dict[str, Any]], key: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        value = row.get(key)
+        label = "NONE" if value is None else str(value)
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def score_metric(
+    rows: List[Dict[str, Any]],
+    *,
+    signals: Optional[Set[str]] = None,
+    failure_codes: Optional[Set[str]] = None,
+    validator_types: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    selected: List[Dict[str, Any]] = []
+    for row in rows:
+        row_signals = set(row.get("signals", [])) if isinstance(row.get("signals"), list) else set()
+        matched = False
+        if signals and row_signals.intersection(signals):
+            matched = True
+        if failure_codes and row.get("failure_code") in failure_codes:
+            matched = True
+        if validator_types and row.get("validator_type") in validator_types:
+            matched = True
+        if matched:
+            selected.append(row)
+    passed = len([row for row in selected if row.get("passed")])
+    return {
+        "total_trials": len(selected),
+        "passed": passed,
+        "rate": round(passed / len(selected), 4) if selected else None,
+    }
+
+
+def build_eval_scorecard(eval_result: Dict[str, Any]) -> Dict[str, Any]:
+    rows = [row for row in eval_result.get("trial_results", []) if isinstance(row, dict)]
+    return {
+        "schema": "sh.scorecard.v1",
+        "eval_run_id": eval_result.get("eval_run_id"),
+        "suite": eval_result.get("suite"),
+        "generated_at": utc_now(),
+        "task_count": eval_result.get("task_count"),
+        "trial_count": eval_result.get("trial_count"),
+        "passed": eval_result.get("passed"),
+        "failed": eval_result.get("failed"),
+        "pass_rate": eval_result.get("pass_rate"),
+        "completion_auditor_metrics": {
+            "false_completion_detection_rate": score_metric(
+                rows,
+                signals={"false_completion", "failed_test"},
+                failure_codes={"FAILED_TEST"},
+            ),
+            "evidence_gap_detection_rate": score_metric(
+                rows,
+                signals={"evidence_less_completion", "hallucinated_evidence", "artifact_mismatch", "missing_proof", "stale_manifest", "require_artifacts_default", "invalid_evidence"},
+                failure_codes={"INVALID_EVIDENCE", "ARTIFACT_MISMATCH"},
+            ),
+            "unsafe_resume_block_rate": score_metric(
+                rows,
+                signals={"unsafe_resume", "security_violation"},
+                failure_codes={"UNSAFE_RESUME"},
+            ),
+            "no_progress_detection_rate": score_metric(
+                rows,
+                signals={"no_progress_loop", "repeated_tool_failure"},
+                failure_codes={"NO_PROGRESS", "REPEATED_TOOL_FAILURE"},
+            ),
+            "permission_block_rate": score_metric(
+                rows,
+                signals={"permission_denied", "read_only_write", "network_allowlist", "destructive_action"},
+                failure_codes={"PERMISSION_DENIED", "BLOCKED_APPROVAL", "UNSAFE_ACTION"},
+            ),
+            "gap_fill_routing_rate": score_metric(
+                rows,
+                signals={"gap_fill", "missing_proof", "oracle_incomplete"},
+            ),
+            "hang_detection_rate": score_metric(
+                rows,
+                signals={"sut_hang_timeout", "progressing_tick"},
+                failure_codes={"SUT_HANG_TIMEOUT"},
+            ),
+            "remediation_gate_rate": score_metric(
+                rows,
+                signals={"cleanup_evidence_valid", "cleanup_timeout", "environment_control_lost"},
+                failure_codes={"REMEDIATION_TIMEOUT"},
+            ),
+            "artifact_backed_validator_pass_rate": score_metric(
+                rows,
+                validator_types={"workflow_evidence", "completion_artifact"},
+            ),
+        },
+        "resource_metrics": {
+            "duration_ms_total": eval_result.get("duration_ms_total"),
+            "estimated_cost_total": eval_result.get("estimated_cost_total"),
+            "retries_total": eval_result.get("retries_total"),
+            "tool_error_rate": eval_result.get("tool_error_rate"),
+        },
+        "breakdowns": {
+            "failure_code": count_values(rows, "failure_code"),
+            "validator_type": count_values(rows, "validator_type"),
+        },
     }
 
 
@@ -1907,12 +2147,21 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
         "trial_results": trial_results,
     }
     write_json(out_dir / "eval_result.json", result)
+    scorecard = build_eval_scorecard(result)
+    scorecard_schema_path = root / "schemas" / "scorecard.schema.json"
+    if scorecard_schema_path.exists():
+        scorecard_schema = load_json_object(scorecard_schema_path, "scorecard schema")
+        scorecard_findings = validate_against_schema(scorecard, scorecard_schema, "$.scorecard")
+        if scorecard_findings:
+            raise ShRuntimeError("generated scorecard failed schema validation", payload={"findings": scorecard_findings})
+    write_json(out_dir / "scorecard.json", scorecard)
     review_lines = [
         f"# Transcript Review - {eval_run_id}",
         "",
         f"- suite: {result['suite']}",
         f"- pass_rate: {result['pass_rate']}",
         f"- failed: {result['failed']}",
+        f"- scorecard: {out_dir / 'scorecard.json'}",
         "",
         "## Failed Trials",
     ]
@@ -1924,6 +2173,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
         {
             "ok": result["ok"],
             "eval_result": str(out_dir / "eval_result.json"),
+            "scorecard": str(out_dir / "scorecard.json"),
             "summary": {k: result[k] for k in ("task_count", "trial_count", "pass_rate", "duration_ms_total", "estimated_cost_total", "retries_total", "tool_error_rate")},
         },
         0 if result["ok"] else 8,
@@ -2495,6 +2745,24 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         trial_results = [grade_eval_task(root, row, trial) for row in loaded_tasks for trial in range(1, 4)]
         assert len(trial_results) == 60
         assert all(row["passed"] for row in trial_results)
+        scorecard = build_eval_scorecard(
+            {
+                "eval_run_id": "self_test",
+                "suite": "evals/benchmark_tasks.jsonl",
+                "task_count": 20,
+                "trial_count": len(trial_results),
+                "passed": len(trial_results),
+                "failed": 0,
+                "pass_rate": 1.0,
+                "duration_ms_total": 600,
+                "estimated_cost_total": 0.0,
+                "retries_total": 0,
+                "tool_error_rate": 0.0,
+                "trial_results": trial_results,
+            }
+        )
+        assert scorecard["schema"] == "sh.scorecard.v1"
+        assert scorecard["completion_auditor_metrics"]["evidence_gap_detection_rate"]["rate"] == 1.0
         try:
             record_step(
                 root,
@@ -2673,6 +2941,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("validate-schemas", help="Validate repo schemas, contracts, taxonomy, eval tasks, policy, and manifest identity")
     p.add_argument("--root", default=".")
     p.set_defaults(func=cmd_validate_schemas)
+
+    p = sub.add_parser("validate-release", help="Validate release gate contracts, thin-contract anchors, and version surface")
+    p.add_argument("--root", default=".")
+    p.set_defaults(func=cmd_validate_release)
 
     p = sub.add_parser("validate-policy", help="Validate a proposed action against SH permission/network policy")
     p.add_argument("--root", default=".")

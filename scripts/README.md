@@ -37,14 +37,23 @@ py scripts/sh_runtime.py record-interruption --root . --run-id <run_id> --kind p
 py scripts/sh_runtime.py resume-run --root . --run-id <run_id> --reason "smoke resume"
 py scripts/sh_runtime.py replay-run --root . --run-id <run_id>
 py scripts/sh_runtime.py validate-schemas --root .
+py scripts/sh_runtime.py validate-release --root .
 py scripts/sh_runtime.py validate-policy --root . --policy security/policy.json --action-file security/fixtures/read_only_ok.json
 py scripts/sh_runtime.py run-evals --root . --suite evals/benchmark_tasks.jsonl --trials 3
 ```
 
 `validate-schemas` checks JSON schema files, tool contracts, failure taxonomy,
 eval task fixtures, the security policy presence, and plugin/marketplace
-manifest identity. Manifest descriptions and host-specific interface fields may
-differ, but every present manifest must keep the same `name` and `version`.
+manifest identity. It also reports the separated `plugin_version`,
+`runtime_version`, and `schema_version` surface. Manifest descriptions and
+host-specific interface fields may differ, but every present manifest must keep
+the same `name` and `version`.
+
+`validate-release` is the thin release gate. It reuses the schema/eval/manifest
+checks, confirms the security policy exists, verifies Thin Contract Patch
+anchors in README/AGENTS/skills/templates, rejects forbidden prompt-template
+phrases such as `production-grade`, `100%`, and `auto-commit`, and reports the
+same explicit version surface. It exits `9` when a release contract fails.
 
 `run-resume` intentionally fails closed until a real sandbox adapter exists.
 Unsafe local execution would violate the resume-check security contract.
@@ -85,9 +94,12 @@ The durable runner commands create ignored runtime artifacts under
 If `record-step` changes state, pass `--event <state-machine-event>`; the event must match the canonical transition map. Same-state trace rows do not require an event.
 
 `run-evals` executes repo-local deterministic benchmark fixtures. It writes
-`.sh/evals/<eval_run_id>/eval_result.json` and
-`.sh/evals/<eval_run_id>/transcript_review.md`, and returns exit code `8`
-when any trial fails.
+`.sh/evals/<eval_run_id>/eval_result.json`,
+`.sh/evals/<eval_run_id>/scorecard.json`, and
+`.sh/evals/<eval_run_id>/transcript_review.md`, and returns exit code `8` when
+any trial fails. `scorecard.json` aggregates Completion Auditor product metrics
+such as false-completion detection, evidence-gap detection, unsafe-resume
+blocking, no-progress detection, remediation gating, and runtime overhead.
 Eval tasks must reference existing `expected_artifacts`; selected fixtures can also invoke the workflow evidence validator, resume contract validator, or policy validator as part of grading.
 Eval tasks may also invoke the Completion Auditor artifact validator with
 `fixture.validator.type: completion_artifact`.

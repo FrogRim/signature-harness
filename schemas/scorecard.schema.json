@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frogrim.local/signature-harness/scorecard.schema.json",
+  "title": "Signature Harness Eval Scorecard",
+  "type": "object",
+  "required": [
+    "schema",
+    "eval_run_id",
+    "suite",
+    "generated_at",
+    "task_count",
+    "trial_count",
+    "passed",
+    "failed",
+    "pass_rate",
+    "completion_auditor_metrics",
+    "resource_metrics",
+    "breakdowns"
+  ],
+  "properties": {
+    "schema": {"const": "sh.scorecard.v1"},
+    "eval_run_id": {"type": "string"},
+    "suite": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "task_count": {"type": "integer", "minimum": 0},
+    "trial_count": {"type": "integer", "minimum": 0},
+    "passed": {"type": "integer", "minimum": 0},
+    "failed": {"type": "integer", "minimum": 0},
+    "pass_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "completion_auditor_metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["total_trials", "passed", "rate"],
+        "properties": {
+          "total_trials": {"type": "integer", "minimum": 0},
+          "passed": {"type": "integer", "minimum": 0},
+          "rate": {"type": ["number", "null"], "minimum": 0, "maximum": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "resource_metrics": {
+      "type": "object",
+      "required": ["duration_ms_total", "estimated_cost_total", "retries_total", "tool_error_rate"]
+    },
+    "breakdowns": {
+      "type": "object",
+      "required": ["failure_code", "validator_type"]
+    }
+  },
+  "additionalProperties": false
+}
