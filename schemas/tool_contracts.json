@@ -79,6 +79,19 @@
       "failure_modes": ["SUT_HANG_TIMEOUT", "REMEDIATION_TIMEOUT", "INVALID_EVIDENCE", "CONTRACT_VIOLATION"]
     },
     {
+      "name": "validate-architecture-candidate",
+      "description": "Validate source-of-record SH architecture candidates before promotion or implementation.",
+      "inputSchema": {"type": "object", "required": ["candidate"], "properties": {"candidate": {"type": "string"}, "root": {"type": "string"}}},
+      "outputSchema": {"type": "object", "required": ["ok", "candidate", "id", "status", "findings"]},
+      "exit_codes": {"0": "candidate contract valid", "2": "candidate schema, evidence, or boundary contract invalid"},
+      "retryability": "candidate_repair_required",
+      "timeout_sec": 5,
+      "side_effect_class": "read_only",
+      "approval_required": false,
+      "emitted_artifacts": [],
+      "failure_modes": ["CONTRACT_VIOLATION", "MISSING_CONTEXT"]
+    },
+    {
       "name": "run-resume",
       "description": "Fail-closed placeholder for sandboxed resume check execution.",
       "inputSchema": {"type": "object", "required": ["contract"], "properties": {"contract": {"type": "string"}, "receipt": {"type": "string"}}},

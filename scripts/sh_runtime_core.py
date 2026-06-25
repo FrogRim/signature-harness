@@ -217,6 +217,7 @@ EXPECTED_SCHEMA_FILES = {
     "security_policy.schema.json",
     "completion_artifact.schema.json",
     "scorecard.schema.json",
+    "architecture_candidate.schema.json",
 }
 EXPECTED_TOOL_CONTRACTS = {
     "init-state",
@@ -237,6 +238,7 @@ EXPECTED_TOOL_CONTRACTS = {
     "validate-policy",
     "validate-completion-artifact",
     "validate-release",
+    "validate-architecture-candidate",
     "run-evals",
     "self-test",
 }

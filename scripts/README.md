@@ -28,6 +28,7 @@ py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts
 py scripts/sh_runtime.py validate-workflow-evidence --evidence .sh/workflows/wf_001.json --root . --require-artifacts --evidence-manifest .sh/evidence/hash-manifest.json
 py scripts/sh_runtime.py validate-completion-artifact --artifact evals/fixtures/evidence/sut_hang_timeout.json
+py scripts/sh_runtime.py validate-architecture-candidate --candidate .sh/candidates/arch_001.json --root .
 py scripts/sh_runtime.py write-directive --run-id run_1 --from-state RUNNING --event oracle_incomplete --to-state GAP_FILL
 py scripts/sh_runtime.py append-ledger --entry .sh/events/event.json
 py scripts/sh_runtime.py verify-ledger --root .
@@ -85,6 +86,14 @@ previous/current hashes to recommend `INCOMPLETE` and `REMEDIATING`.
 recommends `ABORTED`. Exit code `0` means the artifact is valid with no
 fail-closed gate, `2` means invalid schema, `5` means incomplete/remediation
 handling is required, and `6` means remediation timeout.
+
+`validate-architecture-candidate` checks SH meta-architecture proposals before
+they become source changes. It validates `schemas/architecture_candidate.schema.json`,
+requires cited evidence paths to exist, rejects direct host-local `.claude/` or
+`.codex/` targets, requires Codex/Claude compatibility notes, and requires
+`validate-schemas` plus `validate-release` in the candidate verification plan.
+It exits `0` for a valid candidate and `2` for schema, evidence, or boundary
+violations.
 
 The durable runner commands create ignored runtime artifacts under
 `.sh/runs/<run_id>/`: `run_manifest.json`, `state.json`,

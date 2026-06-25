@@ -85,6 +85,10 @@ def emit(payload: Dict[str, Any], code: int = 0) -> int:
 SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REMEDIATION_CLEANUP_STATUSES = {"cleanup_complete", "reset_complete"}
 REMEDIATION_RESOURCE_CLEAR_STATUSES = {"clear", "none_remaining"}
+ARCHITECTURE_CANDIDATE_SCOPES = {"agents", "skills", "commands", "runtime", "plugin", "docs", "templates", "schemas", "installer"}
+ARCHITECTURE_CANDIDATE_ACTIONS = {"add", "merge", "delete", "update", "split", "prune", "keep"}
+ARCHITECTURE_AGENT_TEAMS_DEPENDENCIES = {"none", "optional"}
+FORBIDDEN_HOST_TARGET_SEGMENTS = {".claude", ".codex"}
 
 
 def cmd_validate_transition(args: argparse.Namespace) -> int:
@@ -754,6 +758,105 @@ def cmd_validate_workflow_evidence(args: argparse.Namespace) -> int:
     if not result["completion_allowed"]:
         return emit(result, 5)
     return emit(result)
+
+
+def architecture_candidate_path_findings(root: Path, raw: Any, label: str, must_exist: bool) -> Tuple[List[Dict[str, str]], Optional[str]]:
+    findings: List[Dict[str, str]] = []
+    if not is_non_empty_string(raw):
+        findings.append({"code": f"invalid_{label}", "detail": f"{label} must be a non-empty repo-relative path"})
+        return findings, None
+
+    rel = str(raw).strip().replace("\\", "/")
+    if rel.startswith("/") or re.match(r"^[A-Za-z]:", rel):
+        findings.append({"code": f"{label}_absolute", "detail": f"{label} must be repo-relative: {rel!r}"})
+        return findings, rel
+    if not is_safe_relative_path(rel):
+        findings.append({"code": f"{label}_unsafe", "detail": f"{label} must not escape root or contain shell metacharacters: {rel!r}"})
+        return findings, rel
+
+    first_segment = rel.split("/", 1)[0]
+    if first_segment in FORBIDDEN_HOST_TARGET_SEGMENTS:
+        findings.append({"code": "forbidden_host_target", "detail": f"{label} must target repo source-of-record, not host-local {first_segment}/: {rel!r}"})
+
+    path = (root / rel).resolve()
+    if not is_under(path, root):
+        findings.append({"code": f"{label}_escapes_root", "detail": f"{label} escapes root: {rel!r}"})
+        return findings, rel
+    if must_exist and not path.exists():
+        findings.append({"code": f"{label}_missing", "detail": f"{label} does not exist: {rel!r}"})
+    return findings, rel
+
+
+def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, Any], schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    findings: List[Dict[str, str]] = []
+    if schema is not None:
+        findings.extend(validate_against_schema(candidate, schema, "$.architecture_candidate"))
+
+    scope = candidate.get("scope")
+    if isinstance(scope, list):
+        for item in scope:
+            if item not in ARCHITECTURE_CANDIDATE_SCOPES:
+                findings.append({"code": "invalid_candidate_scope", "detail": f"scope item must be one of {sorted(ARCHITECTURE_CANDIDATE_SCOPES)}: {item!r}"})
+
+    evidence = candidate.get("evidence")
+    if isinstance(evidence, list):
+        for index, item in enumerate(evidence):
+            if not isinstance(item, dict):
+                continue
+            path_findings, _ = architecture_candidate_path_findings(root, item.get("path"), f"evidence[{index}].path", must_exist=True)
+            findings.extend(path_findings)
+
+    proposed_changes = candidate.get("proposed_changes")
+    if isinstance(proposed_changes, list):
+        for index, item in enumerate(proposed_changes):
+            if not isinstance(item, dict):
+                continue
+            action = item.get("action")
+            if action not in ARCHITECTURE_CANDIDATE_ACTIONS:
+                findings.append({"code": "invalid_candidate_action", "detail": f"proposed_changes[{index}].action must be one of {sorted(ARCHITECTURE_CANDIDATE_ACTIONS)}: {action!r}"})
+            must_exist = action != "add"
+            path_findings, rel = architecture_candidate_path_findings(root, item.get("target"), f"proposed_changes[{index}].target", must_exist=must_exist)
+            findings.extend(path_findings)
+            if action == "add" and rel:
+                parent = Path(rel).parent.as_posix()
+                if parent not in ("", ".") and not (root / parent).resolve().exists():
+                    findings.append({"code": "candidate_target_parent_missing", "detail": f"add target parent does not exist: {parent!r}"})
+
+    compatibility = candidate.get("compatibility")
+    if isinstance(compatibility, dict):
+        dependency = compatibility.get("agent_teams_dependency")
+        if dependency not in ARCHITECTURE_AGENT_TEAMS_DEPENDENCIES:
+            findings.append({"code": "invalid_agent_teams_dependency", "detail": "agent_teams_dependency must be 'none' or 'optional'; required dependencies are not portable"})
+
+    verification = candidate.get("verification")
+    if isinstance(verification, dict):
+        commands = verification.get("commands")
+        if isinstance(commands, list):
+            command_text = "\n".join(str(command) for command in commands)
+            for required in ("validate-schemas", "validate-release"):
+                if required not in command_text:
+                    findings.append({"code": "candidate_verification_missing_command", "detail": f"verification.commands must include {required}"})
+
+    return {
+        "ok": not findings,
+        "schema": candidate.get("schema"),
+        "id": candidate.get("id"),
+        "status": candidate.get("status"),
+        "application_mode": candidate.get("application_mode"),
+        "finding_count": len(findings),
+        "findings": findings,
+        "recommended_oracle_verdict": "CANDIDATE_VALID" if not findings else "INCOMPLETE",
+    }
+
+
+def cmd_validate_architecture_candidate(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve()
+    candidate_path = Path(args.candidate).resolve()
+    candidate = load_json_object(candidate_path, "architecture candidate")
+    schema = load_json_object(root / "schemas" / "architecture_candidate.schema.json", "architecture candidate schema")
+    result = validate_architecture_candidate_contract(root, candidate, schema=schema)
+    result["candidate"] = rel_posix(candidate_path, root) if is_under(candidate_path, root) else str(candidate_path)
+    return emit(result, 0 if result["ok"] else 2)
 
 
 def parse_utc_timestamp(value: Any, label: str, findings: List[Dict[str, str]]) -> Optional[_dt.datetime]:
@@ -2498,6 +2601,54 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         assert not incomplete_result["completion_allowed"]
         assert incomplete_result["recommended_oracle_verdict"] == "INCOMPLETE"
 
+        architecture_candidate = {
+            "schema": "sh.architecture_candidate.v1",
+            "id": "arch_self_test",
+            "status": "candidate",
+            "application_mode": "candidate_only",
+            "scope": ["skills"],
+            "summary": "Update a source-of-record skill based on cited evidence.",
+            "evidence": [
+                {
+                    "path": "src/app.txt",
+                    "line": 1,
+                    "observation": "source file exists for self-test evidence",
+                }
+            ],
+            "proposed_changes": [
+                {
+                    "action": "update",
+                    "target": "src/app.txt",
+                    "reason": "self-test source-of-record target",
+                }
+            ],
+            "compatibility": {
+                "codex": "source-of-record path only",
+                "claude": "source-of-record path only",
+                "agent_teams_dependency": "none",
+            },
+            "verification": {
+                "commands": [
+                    "py -3 scripts/sh_runtime.py validate-schemas --root .",
+                    "py -3 scripts/sh_runtime.py validate-release --root .",
+                ],
+                "oracle_criteria": ["evidence path exists"],
+            },
+            "residual_risks": [],
+        }
+        candidate_result = validate_architecture_candidate_contract(root, architecture_candidate)
+        assert candidate_result["ok"]
+        host_candidate = json.loads(json.dumps(architecture_candidate))
+        host_candidate["proposed_changes"][0]["target"] = ".claude/agents/reviewer.md"
+        host_result = validate_architecture_candidate_contract(root, host_candidate)
+        assert not host_result["ok"]
+        assert any(item["code"] == "forbidden_host_target" for item in host_result["findings"])
+        missing_evidence_candidate = json.loads(json.dumps(architecture_candidate))
+        missing_evidence_candidate["evidence"][0]["path"] = "missing/evidence.md"
+        missing_evidence_result = validate_architecture_candidate_contract(root, missing_evidence_candidate)
+        assert not missing_evidence_result["ok"]
+        assert any(item["code"] == "evidence[0].path_missing" for item in missing_evidence_result["findings"])
+
         directive_args = argparse.Namespace(
             root=str(root),
             run_id="run_1",
@@ -2854,6 +3005,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--artifact", required=True)
     p.add_argument("--max-retries", type=int, default=0)
     p.set_defaults(func=cmd_validate_completion_artifact)
+
+    p = sub.add_parser("validate-architecture-candidate", help="Validate source-of-record architecture candidate evidence")
+    p.add_argument("--candidate", required=True)
+    p.add_argument("--root", default=".")
+    p.set_defaults(func=cmd_validate_architecture_candidate)
 
     p = sub.add_parser("run-resume", help="Fail-closed resume check runner until a sandbox adapter exists")
     p.add_argument("--contract", required=True)
