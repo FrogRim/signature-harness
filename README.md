@@ -58,7 +58,7 @@ cd signature-harness
 skill은 세 tier로 나뉩니다.
 
 1. **Public entrypoint** - `/sh`, `/signature-harness:sh`, `$sh-goal`. 일반 사용자는 이 entrypoint만 기억하면 됩니다.
-2. **Direct utility skill** - `deep-interview`, `brainstorming`, `test-driven-development`, `meta-harness-audit`. goal loop이 routing으로 부르기도 하지만, 필요하면 직접 호출할 수 있는 범용 보조 도구입니다.
+2. **Direct utility skill** - `deep-interview`, `brainstorming`, `test-driven-development`, `meta-harness-audit`. 좁은 trigger에 맞을 때만 명시적으로 호출하는 보조 도구입니다.
 3. **Routed internal module** - `orchestration-loop`, `oracle-verification`, `red-team`, `active-slice`, `seed-crystallizer` 등. 직접 부르기보다 `/sh` 또는 `$sh-goal`의 routing에 맡기는 것이 기본입니다.
 
 선로는 좁게 두고, 보조 공구는 필요할 때 직접 꺼낼 수 있게 한 구조입니다.

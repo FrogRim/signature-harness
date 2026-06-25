@@ -12,7 +12,7 @@ Application Mode: candidate_only
 - observation:
 
 ## Proposed Change
-- action: add | merge | delete | update | split | prune | keep
+- action: add | merge | delete | update | split | prune
 - target: <repo-relative source-of-record path>
 - reason:
 
@@ -47,7 +47,7 @@ py -3 scripts/sh_runtime.py validate-architecture-candidate --candidate .sh/cand
   "id": "<candidate-id>",
   "status": "candidate",
   "application_mode": "candidate_only",
-  "scope": ["skills"],
+  "scope": ["skills", "runtime"],
   "summary": "<one sentence>",
   "evidence": [
     {

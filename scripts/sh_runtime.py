@@ -86,9 +86,13 @@ SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 REMEDIATION_CLEANUP_STATUSES = {"cleanup_complete", "reset_complete"}
 REMEDIATION_RESOURCE_CLEAR_STATUSES = {"clear", "none_remaining"}
 ARCHITECTURE_CANDIDATE_SCOPES = {"agents", "skills", "commands", "runtime", "plugin", "docs", "templates", "schemas", "installer"}
-ARCHITECTURE_CANDIDATE_ACTIONS = {"add", "merge", "delete", "update", "split", "prune", "keep"}
+ARCHITECTURE_CANDIDATE_ACTIONS = {"add", "merge", "delete", "update", "split", "prune"}
 ARCHITECTURE_AGENT_TEAMS_DEPENDENCIES = {"none", "optional"}
 FORBIDDEN_HOST_TARGET_SEGMENTS = {".claude", ".codex"}
+ARCHITECTURE_REQUIRED_COMMANDS = {
+    "validate-schemas": "py -3 scripts/sh_runtime.py validate-schemas --root .",
+    "validate-release": "py -3 scripts/sh_runtime.py validate-release --root .",
+}
 
 
 def cmd_validate_transition(args: argparse.Namespace) -> int:
@@ -775,7 +779,7 @@ def architecture_candidate_path_findings(root: Path, raw: Any, label: str, must_
         return findings, rel
 
     first_segment = rel.split("/", 1)[0]
-    if first_segment in FORBIDDEN_HOST_TARGET_SEGMENTS:
+    if first_segment.lower() in FORBIDDEN_HOST_TARGET_SEGMENTS:
         findings.append({"code": "forbidden_host_target", "detail": f"{label} must target repo source-of-record, not host-local {first_segment}/: {rel!r}"})
 
     path = (root / rel).resolve()
@@ -787,10 +791,25 @@ def architecture_candidate_path_findings(root: Path, raw: Any, label: str, must_
     return findings, rel
 
 
+def architecture_candidate_non_empty_findings(value: Any, label: str) -> List[Dict[str, str]]:
+    if is_non_empty_string(value):
+        return []
+    return [{"code": "candidate_empty_text", "detail": f"{label} must be a non-empty string"}]
+
+
+def normalize_architecture_candidate_command(value: Any) -> Optional[str]:
+    if not is_non_empty_string(value):
+        return None
+    return str(value).strip().replace("\\", "/")
+
+
 def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, Any], schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     findings: List[Dict[str, str]] = []
     if schema is not None:
         findings.extend(validate_against_schema(candidate, schema, "$.architecture_candidate"))
+
+    for key in ("id", "summary"):
+        findings.extend(architecture_candidate_non_empty_findings(candidate.get(key), key))
 
     scope = candidate.get("scope")
     if isinstance(scope, list):
@@ -803,6 +822,7 @@ def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, An
         for index, item in enumerate(evidence):
             if not isinstance(item, dict):
                 continue
+            findings.extend(architecture_candidate_non_empty_findings(item.get("observation"), f"evidence[{index}].observation"))
             path_findings, _ = architecture_candidate_path_findings(root, item.get("path"), f"evidence[{index}].path", must_exist=True)
             findings.extend(path_findings)
 
@@ -814,6 +834,7 @@ def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, An
             action = item.get("action")
             if action not in ARCHITECTURE_CANDIDATE_ACTIONS:
                 findings.append({"code": "invalid_candidate_action", "detail": f"proposed_changes[{index}].action must be one of {sorted(ARCHITECTURE_CANDIDATE_ACTIONS)}: {action!r}"})
+            findings.extend(architecture_candidate_non_empty_findings(item.get("reason"), f"proposed_changes[{index}].reason"))
             must_exist = action != "add"
             path_findings, rel = architecture_candidate_path_findings(root, item.get("target"), f"proposed_changes[{index}].target", must_exist=must_exist)
             findings.extend(path_findings)
@@ -824,6 +845,8 @@ def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, An
 
     compatibility = candidate.get("compatibility")
     if isinstance(compatibility, dict):
+        for key in ("codex", "claude"):
+            findings.extend(architecture_candidate_non_empty_findings(compatibility.get(key), f"compatibility.{key}"))
         dependency = compatibility.get("agent_teams_dependency")
         if dependency not in ARCHITECTURE_AGENT_TEAMS_DEPENDENCIES:
             findings.append({"code": "invalid_agent_teams_dependency", "detail": "agent_teams_dependency must be 'none' or 'optional'; required dependencies are not portable"})
@@ -832,10 +855,14 @@ def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, An
     if isinstance(verification, dict):
         commands = verification.get("commands")
         if isinstance(commands, list):
-            command_text = "\n".join(str(command) for command in commands)
-            for required in ("validate-schemas", "validate-release"):
-                if required not in command_text:
-                    findings.append({"code": "candidate_verification_missing_command", "detail": f"verification.commands must include {required}"})
+            normalized_commands = {command for command in (normalize_architecture_candidate_command(command) for command in commands) if command}
+            for key, expected_command in ARCHITECTURE_REQUIRED_COMMANDS.items():
+                if expected_command not in normalized_commands:
+                    findings.append({"code": "candidate_verification_missing_command", "detail": f"verification.commands must include exact command: {expected_command}"})
+        criteria = verification.get("oracle_criteria")
+        if isinstance(criteria, list):
+            for index, criterion in enumerate(criteria):
+                findings.extend(architecture_candidate_non_empty_findings(criterion, f"verification.oracle_criteria[{index}]"))
 
     return {
         "ok": not findings,
@@ -852,8 +879,19 @@ def validate_architecture_candidate_contract(root: Path, candidate: Dict[str, An
 def cmd_validate_architecture_candidate(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     candidate_path = Path(args.candidate).resolve()
-    candidate = load_json_object(candidate_path, "architecture candidate")
-    schema = load_json_object(root / "schemas" / "architecture_candidate.schema.json", "architecture candidate schema")
+    try:
+        candidate = load_json_object(candidate_path, "architecture candidate")
+        schema = load_json_object(root / "schemas" / "architecture_candidate.schema.json", "architecture candidate schema")
+    except OSError as exc:
+        return emit(
+            {
+                "ok": False,
+                "error": str(exc),
+                "candidate": str(candidate_path),
+                "findings": [{"code": "candidate_file_missing", "detail": str(exc)}],
+            },
+            2,
+        )
     result = validate_architecture_candidate_contract(root, candidate, schema=schema)
     result["candidate"] = rel_posix(candidate_path, root) if is_under(candidate_path, root) else str(candidate_path)
     return emit(result, 0 if result["ok"] else 2)
@@ -2643,11 +2681,30 @@ def cmd_self_test(_: argparse.Namespace) -> int:
         host_result = validate_architecture_candidate_contract(root, host_candidate)
         assert not host_result["ok"]
         assert any(item["code"] == "forbidden_host_target" for item in host_result["findings"])
+        mixed_case_host_candidate = json.loads(json.dumps(architecture_candidate))
+        mixed_case_host_candidate["proposed_changes"][0]["target"] = ".CoDeX/agents/reviewer.md"
+        mixed_case_host_result = validate_architecture_candidate_contract(root, mixed_case_host_candidate)
+        assert not mixed_case_host_result["ok"]
+        assert any(item["code"] == "forbidden_host_target" for item in mixed_case_host_result["findings"])
         missing_evidence_candidate = json.loads(json.dumps(architecture_candidate))
         missing_evidence_candidate["evidence"][0]["path"] = "missing/evidence.md"
         missing_evidence_result = validate_architecture_candidate_contract(root, missing_evidence_candidate)
         assert not missing_evidence_result["ok"]
         assert any(item["code"] == "evidence[0].path_missing" for item in missing_evidence_result["findings"])
+        fake_command_candidate = json.loads(json.dumps(architecture_candidate))
+        fake_command_candidate["verification"]["commands"] = ["echo validate-schemas validate-release"]
+        fake_command_result = validate_architecture_candidate_contract(root, fake_command_candidate)
+        assert not fake_command_result["ok"]
+        assert any(item["code"] == "candidate_verification_missing_command" for item in fake_command_result["findings"])
+        empty_text_candidate = json.loads(json.dumps(architecture_candidate))
+        empty_text_candidate["summary"] = " "
+        empty_text_candidate["evidence"][0]["observation"] = ""
+        empty_text_candidate["proposed_changes"][0]["reason"] = ""
+        empty_text_candidate["compatibility"]["codex"] = ""
+        empty_text_candidate["verification"]["oracle_criteria"] = [""]
+        empty_text_result = validate_architecture_candidate_contract(root, empty_text_candidate)
+        assert not empty_text_result["ok"]
+        assert any(item["code"] == "candidate_empty_text" for item in empty_text_result["findings"])
 
         directive_args = argparse.Namespace(
             root=str(root),

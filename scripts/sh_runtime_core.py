@@ -341,6 +341,8 @@ def validate_against_schema(value: Any, schema: Dict[str, Any], path: str = "$")
         findings.append({"code": "schema_const_mismatch", "detail": f"{path} expected const {schema['const']!r}"})
     if "minimum" in schema and isinstance(value, (int, float)) and value < schema["minimum"]:
         findings.append({"code": "schema_minimum_violation", "detail": f"{path} must be >= {schema['minimum']!r}"})
+    if "minLength" in schema and isinstance(value, str) and len(value) < int(schema["minLength"]):
+        findings.append({"code": "schema_min_length_violation", "detail": f"{path} must contain at least {schema['minLength']} character(s)"})
     if "minItems" in schema and isinstance(value, list) and len(value) < int(schema["minItems"]):
         findings.append({"code": "schema_min_items_violation", "detail": f"{path} must contain at least {schema['minItems']} item(s)"})
     if isinstance(value, dict):

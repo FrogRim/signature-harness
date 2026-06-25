@@ -89,9 +89,11 @@ handling is required, and `6` means remediation timeout.
 
 `validate-architecture-candidate` checks SH meta-architecture proposals before
 they become source changes. It validates `schemas/architecture_candidate.schema.json`,
-requires cited evidence paths to exist, rejects direct host-local `.claude/` or
-`.codex/` targets, requires Codex/Claude compatibility notes, and requires
-`validate-schemas` plus `validate-release` in the candidate verification plan.
+requires cited evidence paths and non-empty rationale fields, rejects direct
+host-local `.claude/` or `.codex/` targets case-insensitively, requires
+Codex/Claude compatibility notes, and requires the exact canonical
+`validate-schemas` plus `validate-release` commands in the candidate
+verification plan.
 It exits `0` for a valid candidate and `2` for schema, evidence, or boundary
 violations.
 

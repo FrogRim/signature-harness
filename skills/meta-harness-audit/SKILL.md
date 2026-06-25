@@ -5,8 +5,7 @@ description: Use when explicitly asked to audit Signature Harness agents/skills/
 
 # Meta-Harness Audit
 
-Audit Signature Harness itself as a source-of-record harness. This skill adapts
-the useful design-time audit idea from meta harness factories while preserving
+Audit Signature Harness itself as a source-of-record harness while preserving
 SH's portable, candidate-first contract.
 
 ## Boundary
@@ -50,9 +49,9 @@ Do not create or apply scaffolds. This skill produces candidates only.
    - public/direct/internal tier claims
 3. Identify overlaps, missing roles, stale surfaces, and host-specific coupling.
 4. Reject any proposed change that directly targets `.claude/agents/`, `.claude/skills/`, `.codex/agents/`, or `.codex/skills/`.
-5. Create an Architecture Candidate using `templates/ARCHITECTURE_CANDIDATE.md`.
-6. Persist the machine-readable JSON sidecar when possible.
-7. Validate with:
+5. If proposing a source-of-record architecture change, create an Architecture Candidate using `templates/ARCHITECTURE_CANDIDATE.md`.
+6. Persist the machine-readable JSON sidecar for proposed source changes.
+7. Validate proposed source changes with:
 
 ```powershell
 py -3 scripts/sh_runtime.py validate-architecture-candidate --candidate <candidate.json> --root .
@@ -63,12 +62,14 @@ py -3 scripts/sh_runtime.py validate-architecture-candidate --candidate <candida
 Return an Architecture Candidate summary with:
 
 - evidence path and optional line number
-- proposed add/merge/delete/update/split/prune/keep action
+- proposed add/merge/delete/update/split/prune action
 - Codex compatibility
 - Claude compatibility
 - Agent Teams dependency: `none` or `optional`
 - verification commands
 - residual risks
 
-The candidate is not approved merely because it is plausible. It must still pass
-Oracle/release gates before any source file changes are applied.
+If no source-of-record change is justified, report `no candidate recommended`
+with evidence instead of creating a no-op candidate. A candidate is not approved
+merely because it is plausible; it must still pass Oracle/release gates before
+any source file changes are applied.
